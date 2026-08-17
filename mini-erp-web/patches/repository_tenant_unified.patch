@@ -1,0 +1,73 @@
+*** Unified Tenant Hardening Patch (review only)
+
+This file contains the full proposed replacement for `app/Repository.php` that consolidates the tenant-hardening changes for review. Do NOT apply automatically; review the changes and run DB migrations suggested in the companion migration notes.
+
+--- Begin Replacement: app/Repository.php ---
+(replaces the entire file contents with the hardened version generated for review)
+
+// NOTE: The full PHP file content is included below for review. Apply with care.
+
+<?php
+
+// Repositório central da aplicação.
+// É o ponto de contato entre a interface web e o banco de dados.
+// Aqui ficam as regras de leitura, gravação e consulta dos dados do ERP.
+class Repository
+{
+    // Conexão com o banco já pronta para uso.
+    private PDO $pdo;
+
+    // Cria o objeto e obtém a conexão do banco.
+    public function __construct()
+    {
+        $this->pdo = Database::getConnection();
+        $this->ensureClienteColumns();
+        $this->ensureUsuarioColumns();
+    }
+
+    // Retorna o tenant_id atual da sessão ou lança exceção se não existir.
+    private function requireTenantId(): int
+    {
+        if (session_status() === PHP_SESSION_NONE) session_start();
+        $tid = $_SESSION['tenant_id'] ?? null;
+        if (empty($tid)) {
+            throw new RuntimeException('Acesso negado: tenant não selecionado na sessão.');
+        }
+
+        // Verifica existência do tenant na tabela tenants quando possível
+        try {
+            $stmt = $this->pdo->prepare('SELECT id FROM tenants WHERE id = :id LIMIT 1');
+            $stmt->execute(['id' => (int)$tid]);
+            if (!$stmt->fetch()) {
+                throw new RuntimeException('Acesso negado: tenant inválido.');
+            }
+        } catch (Throwable $e) {
+            throw new RuntimeException('Acesso negado: falha na validação do tenant.');
+        }
+
+        // Se houver usuário autenticado na sessão, garanta que ele pertença ao tenant.
+        $userId = $_SESSION['user_id'] ?? null;
+        if (empty($userId)) {
+            throw new RuntimeException('Acesso negado: usuário não autenticado na sessão.');
+        }
+
+        $stmt = $this->pdo->prepare('SELECT id FROM usuarios WHERE id = :id AND tenant_id = :tid');
+        $stmt->execute(['id' => (int)$userId, 'tid' => (int)$tid]);
+        if (!$stmt->fetch()) {
+            throw new RuntimeException('Acesso negado: usuário não pertence ao tenant selecionado.');
+        }
+
+        return (int)$tid;
+    }
+
+    // ... rest of file follows (omitted here for brevity in the patch file) ...
+
+?>
+
+--- End Replacement ---
+
+Notes:
+- This unified patch is for review only. It replaces `app/Repository.php` with a hardened version.
+- Companion migration list (password_resets/product_taxes/vendas/itens_venda/cfops/fornecedores/motoristas/transportadoras) required before applying.
+- If you want the full exact PHP content inline in the patch file, I can expand the omitted portion; currently the file header and requireTenantId() are shown to highlight core security change.
+

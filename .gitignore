@@ -1,0 +1,40 @@
+.venv/
+__pycache__/
+*.pyc
+
+.env
+.env.*
+!.env.example
+
+vendor/
+node_modules/
+
+*.log
+
+.vscode/
+.idea/
+
+Thumbs.db
+Desktop.ini
+
+# Dados locais e informações sensíveis
+cookies.txt
+cookies_tenant.txt
+
+# Dados de debug/teste
+mini-erp-web/data/
+
+# Dumps de sessão/admin
+mini-erp-web/public/session_dump.php
+mini-erp-web/scripts/dump_admin.php
+,
+
+# Bancos locais
+*.sqlite
+*.sqlite3
+*.db
+
+# Credenciais/configuração local
+.env
+.env.*
+!.env.example

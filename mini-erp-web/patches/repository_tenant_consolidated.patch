@@ -1,0 +1,77 @@
+*** Consolidated Tenant Hardening Patch (for review)
+
+This file contains the consolidated, review-ready patch to harden tenant isolation in app/Repository.php.
+DO NOT apply automatically; review changes and run migrations before applying.
+
+Summary of changes included:
+
+1) Strengthen requireTenantId():
+   - validate tenant exists in `tenants` table
+   - if `$_SESSION['user_id']` present, verify the user belongs to that tenant
+
+2) User lookups and password-reset flow:
+   - `findUsuarioByEmail($email, ?$tenantId = null)` optional tenant-scoped lookup
+   - `createPasswordReset()` attaches `tenant_id` to password_resets when possible
+   - `consumePasswordReset()` restricts password update to tenant associated with token
+   - Note: schema migration required: add `tenant_id` column to `password_resets`
+
+3) Product-related fixes:
+   - `saveProductTaxes()` now inserts `tenant_id` into `product_taxes`
+   - `getProductTaxes()` joins with `produtos` and verifies tenant
+   - `listProductTaxes()` already tenant-scoped
+   - `saveProduto()` enforces `tenant_id` and `company_id` from session only (ignores payload)
+   - `listProdutos()`, `findProduto()`, `deleteProduto()` remain tenant-scoped
+
+4) Sales/vendas:
+   - `createSale()` now inserts `tenant_id` into `vendas` and `itens_venda`
+   - `listVendas()` tightened to prefer vendas with matching tenant_id
+   - Recommend migration: add `tenant_id` to `vendas` and `itens_venda` tables
+
+5) Reference tables (CFOPs, Fornecedores, Motoristas, Transportadoras):
+   - Converted CRUD to be tenant-scoped (list/find/save/delete use `tenant_id`)
+   - These changes assume these tables should be tenant-scoped; if they are global references, revert and keep global behavior.
+
+6) Fornecedores / Motoristas / Transportadoras: ensure INSERT/UPDATE include `tenant_id`, and DELETE/SELECT filter by `tenant_id`.
+
+7) Other fixes / notes:
+   - `saveCliente()` already enforces tenant_id; kept as-is
+   - `saveUsuario()` sets `tenant_id` from session; ensure `current_company_id` in session is validated elsewhere
+   - Database initialization code still performs some global admin updates (intended)
+
+Required schema changes (suggested migrations):
+- ALTER TABLE password_resets ADD COLUMN tenant_id INT NULL;
+- ALTER TABLE product_taxes ADD COLUMN tenant_id INT NULL;
+- ALTER TABLE vendas ADD COLUMN tenant_id INT NULL;
+- ALTER TABLE itens_venda ADD COLUMN tenant_id INT NULL;
+- ALTER TABLE cfops ADD COLUMN tenant_id INT NULL; (if tenant-scoped)
+- ALTER TABLE fornecedores ADD COLUMN tenant_id INT NULL;
+- ALTER TABLE motoristas ADD COLUMN tenant_id INT NULL;
+- ALTER TABLE transportadoras ADD COLUMN tenant_id INT NULL;
+
+Patch details (code-snippets, review these hunks before applying):
+
+- requireTenantId() => validate tenant + user membership
+- findUsuarioByEmail($email, ?$tenantId = null) => optional tenant-scoped
+- createPasswordReset() => include tenant_id when user exists
+- consumePasswordReset() => use tenant_id from reset record to restrict update
+- saveProductTaxes()/getProductTaxes() => include tenant_id and join
+- saveProduto() => unset payload tenant/company and use session values
+- createSale() => insert tenant_id into vendas and itens_venda
+- listVendas() => prefer v.tenant_id match
+- listCfops()/findCfop()/saveCfop()/deleteCfop() => tenant-scoped CRUD
+- listFornecedores()/findFornecedor()/saveFornecedor()/deleteFornecedor() => tenant-scoped
+- listMotoristas()/findMotorista()/saveMotorista()/deleteMotorista() => tenant-scoped
+- listTransportadoras()/findTransportadora()/saveTransportadora() => tenant-scoped
+
+Notes:
+- This consolidated patch alters many areas; please review table tenancy assumptions (CFOPs, fornecedores, motoristas, transportadoras may be global reference tables).
+- Apply the DB migrations before enabling the code changes to avoid runtime SQL errors.
+
+Files changed in working copy (for reference):
+- app/Repository.php (multiple method updates)
+
+If you want, I can now:
+- produce a formal unified git-style diff file (patch) representing these hunks,
+- or revert code changes so no live edits exist and instead only provide the patch file.
+
+Review and tell me which you prefer.

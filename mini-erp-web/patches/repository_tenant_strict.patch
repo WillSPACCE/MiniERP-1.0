@@ -1,0 +1,69 @@
+*** Begin Patch
+*** Update File: app/Repository.php
+@@
+     public function findUsuarioByEmail(string $email): ?array
+     {
+-        $stmt = $this->pdo->prepare('SELECT * FROM usuarios WHERE email = :email');
+-        $stmt->execute(['email' => $email]);
+-        return $stmt->fetch() ?: null;
++        // exige tenant para evitar vazamento de usuários entre empresas
++        $tenantId = $this->requireTenantId();
++        $stmt = $this->pdo->prepare('SELECT * FROM usuarios WHERE email = :email AND tenant_id = :tid');
++        $stmt->execute(['email' => $email, 'tid' => $tenantId]);
++        return $stmt->fetch() ?: null;
+     }
+@@
+     public function createOrUpdateAdmin(string $email, string $password, string $nome = 'Administrador'): void
+     {
+-        $existing = $this->findUsuarioByEmail($email);
++        // exige tenant: operações administrativas neste contexto devem ser feitas dentro do tenant
++        $tenantId = $this->requireTenantId();
++        $existing = $this->findUsuarioByEmail($email);
+         $hash = password_hash($password, PASSWORD_DEFAULT);
+ 
+         if ($existing) {
+-            $stmt = $this->pdo->prepare('UPDATE usuarios SET senha = :senha, role = :role, nome = :nome, email_verified = 1 WHERE id = :id');
+-            $stmt->execute([
+-                'senha' => $hash,
+-                'role' => 'admin',
+-                'nome' => $nome,
+-                'id' => (int)$existing['id'],
+-            ]);
++            $stmt = $this->pdo->prepare('UPDATE usuarios SET senha = :senha, role = :role, nome = :nome, email_verified = 1 WHERE id = :id AND tenant_id = :tid');
++            $stmt->execute([
++                'senha' => $hash,
++                'role' => 'admin',
++                'nome' => $nome,
++                'id' => (int)$existing['id'],
++                'tid' => $tenantId,
++            ]);
+             return;
+         }
+ 
+         // Insere novo administrador e marca e-mail como verificado.
+-        $stmt = $this->pdo->prepare('INSERT INTO usuarios (nome, email, senha, role, email_verified) VALUES (:nome, :email, :senha, :role, 1)');
+-        $stmt->execute([
+-            'nome' => $nome,
+-            'email' => $email,
+-            'senha' => $hash,
+-            'role' => 'admin',
+-        ]);
++        $stmt = $this->pdo->prepare('INSERT INTO usuarios (nome, email, senha, role, email_verified, tenant_id) VALUES (:nome, :email, :senha, :role, 1, :tid)');
++        $stmt->execute([
++            'nome' => $nome,
++            'email' => $email,
++            'senha' => $hash,
++            'role' => 'admin',
++            'tid' => $tenantId,
++        ]);
+     }
+@@
+     public function saveProduto(array $data): void
+     {
+-        $tenantId = $this->requireTenantId();
+-        $currentCompany = $_SESSION['current_company_id'] ?? null;
++        $tenantId = $this->requireTenantId();
++        // forçar que tenant_id e company_id venham da sessão, não do payload
++        unset($data['tenant_id'], $data['company_id']);
++        $currentCompany = $_SESSION['current_company_id'] ?? null;
+*** End Patch

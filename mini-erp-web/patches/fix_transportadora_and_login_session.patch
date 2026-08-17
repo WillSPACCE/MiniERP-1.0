@@ -1,0 +1,73 @@
+*** Begin Patch
+*** Update File: app/Repository.php
+@@
+     public function consumePasswordReset(string $token, string $newPassword): bool
+     {
+@@
+         $del = $this->pdo->prepare('DELETE FROM password_resets WHERE token = :token');
+         $del->execute(['token' => $token]);
+         return true;
+     }
+-
+-    public function findTransportadora(int $id): ?array
+-    {
+-        $stmt = $this->pdo->prepare('SELECT * FROM transportadoras WHERE id = :id');
+-        $stmt->execute(['id' => $id]);
+-        return $stmt->fetch() ?: null;
+-    }
+-
+-    public function saveTransportadora(array $data): void
+-    {
+-        $nome = trim((string) ($data['nome'] ?? ''));
+-        $cnpj = preg_replace('/\D/', '', (string) ($data['cpf_cnpj'] ?? ''));
+-        if ($nome === '' || $cnpj === '') {
+-            throw new InvalidArgumentException('Nome e CPF/CNPJ da transportadora são obrigatórios.');
+-        }
+-
+-        $stmt = !empty($data['id'])
+-            ? $this->pdo->prepare('UPDATE transportadoras SET nome = :nome, nome_fantasia = :nome_fantasia, cpf_cnpj = :cpf_cnpj, inscricao_estadual = :inscricao_estadual, email = :email, telefone = :telefone, cep = :cep, logradouro = :logradouro, numero = :numero, complemento = :complemento, bairro = :bairro, municipio = :municipio, uf = :uf, cidade = :cidade, status = :status WHERE id = :id')
+-            : $this->pdo->prepare('INSERT INTO transportadoras (nome, nome_fantasia, cpf_cnpj, inscricao_estadual, email, telefone, cep, logradouro, numero, complemento, bairro, municipio, uf, cidade, status) VALUES (:nome, :nome_fantasia, :cpf_cnpj, :inscricao_estadual, :email, :telefone, :cep, :logradouro, :numero, :complemento, :bairro, :municipio, :uf, :cidade, :status)');
+-
+-        $params = [
+-            'nome' => $nome,
+-            'nome_fantasia' => trim((string) ($data['nome_fantasia'] ?? '')),
+-            'cpf_cnpj' => $cnpj,
+-            'inscricao_estadual' => trim((string) ($data['inscricao_estadual'] ?? '')),
+-            'email' => trim((string) ($data['email'] ?? '')),
+-            'telefone' => trim((string) ($data['telefone'] ?? '')),
+-            'cep' => preg_replace('/\D/', '', (string) ($data['cep'] ?? '')),
+-            'logradouro' => trim((string) ($data['logradouro'] ?? '')),
+-            'numero' => trim((string) ($data['numero'] ?? '')),
+-            'complemento' => trim((string) ($data['complemento'] ?? '')),
+-            'bairro' => trim((string) ($data['bairro'] ?? '')),
+-            'municipio' => trim((string) ($data['municipio'] ?? '')),
+-            'uf' => trim((string) ($data['uf'] ?? '')),
+-            'cidade' => trim((string) ($data['cidade'] ?? '')),
+-            'status' => trim((string) ($data['status'] ?? 'ativo')),
+-        ];
+-
+-        if (!empty($data['id'])) {
+-            $params['id'] = (int) $data['id'];
+-        }
+-
+-        $stmt->execute($params);
+-    }
+*** End Patch
+
+*** Begin Patch
+*** Update File: public/index.php
+@@
+-                // Sucesso: cria sessão e redireciona para dashboard
+-                $_SESSION['user_id'] = (int)$user['id'];
+-                header('Location: ?page=dashboard');
++                // Sucesso: cria sessão, define tenant e empresa corrente e redireciona para dashboard
++                $_SESSION['user_id'] = (int)$user['id'];
++                if (!empty($user['tenant_id'])) {
++                    $_SESSION['tenant_id'] = (int) $user['tenant_id'];
++                }
++                if (!empty($user['company_id'])) {
++                    $_SESSION['current_company_id'] = (int) $user['company_id'];
++                }
++                header('Location: ?page=dashboard');
+                 exit;
+*** End Patch

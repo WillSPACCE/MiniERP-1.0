@@ -1,0 +1,89 @@
+*** Begin Patch
+*** Update File: app/Repository.php
+@@
+     // Lista todos os produtos cadastrados.
+     public function listProdutos(): array
+     {
+-        $companyId = $_SESSION['current_company_id'] ?? null;
+-        if ($companyId) {
+-            $stmt = $this->pdo->prepare('SELECT * FROM produtos WHERE company_id = :cid ORDER BY id DESC');
+-            $stmt->execute(['cid' => (int)$companyId]);
+-            return $stmt->fetchAll();
+-        }
+-        return $this->pdo->query('SELECT * FROM produtos ORDER BY id DESC')->fetchAll();
++        $tenantId = $_SESSION['tenant_id'] ?? null;
++        $companyId = $_SESSION['current_company_id'] ?? null;
++
++        if ($tenantId) {
++            $stmt = $this->pdo->prepare('SELECT * FROM produtos WHERE tenant_id = :tid ORDER BY id DESC');
++            $stmt->execute(['tid' => (int)$tenantId]);
++            return $stmt->fetchAll();
++        }
++        if ($companyId) {
++            // compatibilidade legada enquanto company_id existir
++            $stmt = $this->pdo->prepare('SELECT * FROM produtos WHERE company_id = :cid ORDER BY id DESC');
++            $stmt->execute(['cid' => (int)$companyId]);
++            return $stmt->fetchAll();
++        }
++        return $this->pdo->query('SELECT * FROM produtos ORDER BY id DESC')->fetchAll();
+     }
+@@
+     public function findProduto(int $id): ?array
+     {
+-        $stmt = $this->pdo->prepare('SELECT * FROM produtos WHERE id = :id');
+-        $stmt->execute(['id' => $id]);
+-        $produto = $stmt->fetch();
+-        return $produto ?: null;
++        $stmt = $this->pdo->prepare('SELECT * FROM produtos WHERE id = :id');
++        $stmt->execute(['id' => $id]);
++        $produto = $stmt->fetch();
++        if (!$produto) return null;
++
++        // quando tenant na sessão, garantir escopo
++        $tenantId = $_SESSION['tenant_id'] ?? null;
++        if ($tenantId !== null) {
++            // se registro tem tenant_id e diverge -> não retorna
++            if (!empty($produto['tenant_id']) && (int)$produto['tenant_id'] !== (int)$tenantId) {
++                return null;
++            }
++            // se registro só tem company_id mas existir tenant_id na sessão, podemos permitir enquanto houver compatibilidade
++        }
++        return $produto ?: null;
+     }
+@@
+     public function saveProduto(array $data): void
+     {
+@@
+-        $companyId = $_SESSION['current_company_id'] ?? null;
++        $tenantId = $_SESSION['tenant_id'] ?? null;
++        $companyId = $_SESSION['current_company_id'] ?? null;
+@@
+-        if (!empty($data['id'])) {
+-            $stmt = $this->pdo->prepare('UPDATE produtos SET nome = :nome, codigo = :codigo, ncm = :ncm, cest = :cest, unidade = :unidade, gtin = :gtin, cfop_padrao = :cfop_padrao, categoria = :categoria, preco = :preco, estoque_atual = :estoque_atual, status = :status, company_id = :company_id WHERE id = :id');
+-            $stmt->execute([
++        if (!empty($data['id'])) {
++            $stmt = $this->pdo->prepare('UPDATE produtos SET nome = :nome, codigo = :codigo, ncm = :ncm, cest = :cest, unidade = :unidade, gtin = :gtin, cfop_padrao = :cfop_padrao, categoria = :categoria, preco = :preco, estoque_atual = :estoque_atual, status = :status, company_id = :company_id, tenant_id = :tenant_id WHERE id = :id');
++            $stmt->execute([
+                 'id' => (int) $data['id'],
+                 'nome' => $nome,
+@@
+-                'company_id' => $companyId,
++                'company_id' => $companyId,
++                'tenant_id' => $tenantId,
+             ]);
+             return;
+         }
+ 
+         // Inserção de novo produto com campos fiscais e company_id.
+-        $stmt = $this->pdo->prepare('INSERT INTO produtos (nome, codigo, ncm, cest, unidade, gtin, cfop_padrao, categoria, preco, estoque_atual, status, company_id) VALUES (:nome, :codigo, :ncm, :cest, :unidade, :gtin, :cfop_padrao, :categoria, :preco, :estoque_atual, :status, :company_id)');
+-        $stmt->execute([
++        $stmt = $this->pdo->prepare('INSERT INTO produtos (nome, codigo, ncm, cest, unidade, gtin, cfop_padrao, categoria, preco, estoque_atual, status, company_id, tenant_id) VALUES (:nome, :codigo, :ncm, :cest, :unidade, :gtin, :cfop_padrao, :categoria, :preco, :estoque_atual, :status, :company_id, :tenant_id)');
++        $stmt->execute([
+             'nome' => $nome,
+@@
+-            'company_id' => $companyId,
++            'company_id' => $companyId,
++            'tenant_id' => $tenantId,
+         ]);
+     }
+*** End Patch
