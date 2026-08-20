@@ -268,17 +268,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     // obtém usuário e associa à empresa/tenant
                     $user = $repo->findUsuarioByEmail($email);
                     if ($user) {
-                        // Temporariamente define tenant/session para permitir assignUserToCompany funcionar
-                        $prevTenant = $_SESSION['tenant_id'] ?? null;
-                        $prevCompany = $_SESSION['current_company_id'] ?? null;
-                        $_SESSION['tenant_id'] = $id;
-                        $_SESSION['current_company_id'] = $id;
+                        // Assign user to company/tenant explicitly without mutating session
+                        require_once __DIR__ . '/../src/Repositories/MainDbUserRepository.php';
+                        $mainRepo = new \MiniErp\Repositories\MainDbUserRepository();
                         try {
-                            $repo->assignUserToCompany((int)$user['id'], $id);
-                        } finally {
-                            // restaura sessão
-                            if ($prevTenant === null) unset($_SESSION['tenant_id']); else $_SESSION['tenant_id'] = $prevTenant;
-                            if ($prevCompany === null) unset($_SESSION['current_company_id']); else $_SESSION['current_company_id'] = $prevCompany;
+                            $mainRepo->assignUserToCompanyExplicit((int)$user['id'], $id, $id);
+                        } catch (Throwable $e) {
+                            throw $e;
                         }
                     }
 
