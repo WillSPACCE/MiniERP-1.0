@@ -1,0 +1,2 @@
+<?php
+declare(strict_types=1);namespace MiniErp\Authorization;use MiniErp\Context\AuthenticatedPlatformAdmin;use MiniErp\Contracts\PlatformAdminAuthorizerContract;final class PersistedPlatformAdminAuthorizer implements PlatformAdminAuthorizerContract{public function isAuthorized(AuthenticatedPlatformAdmin $identity):bool{return in_array($identity->getRole(),['SUPER_ADMIN','SUPPORT','DATABASE_ADMIN','AUDITOR'],true);}}

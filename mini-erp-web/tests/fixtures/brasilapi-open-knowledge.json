@@ -1,0 +1,10 @@
+{
+  "cnpj": "19131243000197", "razao_social": "OPEN KNOWLEDGE BRASIL", "nome_fantasia": "REDE PELO CONHECIMENTO LIVRE",
+  "cep": "01311902", "descricao_tipo_de_logradouro": "AVENIDA", "logradouro": "PAULISTA", "numero": "37", "complemento": "4 ANDAR", "bairro": "BELA VISTA",
+  "municipio": "SAO PAULO", "uf": "SP", "codigo_municipio_ibge": "3550308", "codigo_municipio": 7107,
+  "ddd_telefone_1": "1123851939", "ddd_telefone_2": null, "email": null, "cnae_fiscal": 9430800,
+  "cnae_fiscal_descricao": "ATIVIDADES DE ASSOCIACOES DE DEFESA DE DIREITOS SOCIAIS", "natureza_juridica": "ASSOCIACAO PRIVADA",
+  "codigo_natureza_juridica": 3999, "porte": "DEMAIS", "capital_social": 0, "descricao_situacao_cadastral": "ATIVA",
+  "data_inicio_atividade": "2013-09-05", "opcao_pelo_simples": false, "opcao_pelo_mei": false,
+  "descricao_identificador_matriz_filial": "MATRIZ", "qsa": [], "cnaes_secundarios": [], "regime_tributario": []
+}

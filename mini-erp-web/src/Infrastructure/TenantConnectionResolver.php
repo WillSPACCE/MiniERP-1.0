@@ -7,6 +7,7 @@ namespace MiniErp\Infrastructure;
 use DomainException;
 use InvalidArgumentException;
 use MiniErp\Context\TenantContext;
+use MiniErp\Context\AdministrativeContext;
 use PDO;
 
 class TenantConnectionResolver
@@ -20,7 +21,16 @@ class TenantConnectionResolver
 
     public function resolve(TenantContext $context): PDO
     {
-        $tenantId = $context->getEffectiveTenantId();
+        return $this->resolveTenantId($context->getEffectiveTenantId());
+    }
+
+    public function resolveAdministrative(AdministrativeContext $context): PDO
+    {
+        return $this->resolveTenantId($context->getSelectedTenantId());
+    }
+
+    private function resolveTenantId(int $tenantId): PDO
+    {
         $dbName = $this->fetchDbNameForTenantId($tenantId);
         $this->assertValidDatabaseName($dbName);
 

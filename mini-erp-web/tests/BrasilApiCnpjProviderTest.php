@@ -1,0 +1,6 @@
+<?php
+declare(strict_types=1);require __DIR__.'/../vendor/autoload.php';use MiniErp\Infrastructure\BrasilApiCnpjProvider;use MiniErp\Services\CnpjLookupException;
+function bp(bool $v,string $m):void{if(!$v)throw new RuntimeException($m);}$fixture=(string)file_get_contents(__DIR__.'/fixtures/brasilapi-open-knowledge.json');
+$provider=new BrasilApiCnpjProvider(1,2,static function(string $url,int $connect,int $total)use($fixture):array{bp($url==='https://brasilapi.com.br/api/cnpj/v1/19131243000197','fixed endpoint');bp($connect===1&&$total===2,'timeouts');return['status'=>200,'body'=>$fixture];});bp($provider->lookup('19131243000197')?->toArray()['city_ibge_code']==='3550308','normalized provider');
+$cases=[[404,'','',null],[429,'','', 'CNPJ_RATE_LIMIT'],[500,'','', 'CNPJ_SERVICE_UNAVAILABLE'],[200,'not-json','', 'CNPJ_PROVIDER_INVALID_RESPONSE'],[0,false,'Operation timed out','CNPJ_SERVICE_TIMEOUT']];foreach($cases as[$status,$body,$error,$reason]){$p=new BrasilApiCnpjProvider(1,2,static fn()=>['status'=>$status,'body'=>$body,'error'=>$error]);try{$r=$p->lookup('19131243000197');bp($reason===null&&$r===null,'404');}catch(CnpjLookupException $e){bp($e->reason===$reason,'reason '.$reason);}}
+echo "BrasilApiCnpjProvider OK\n";

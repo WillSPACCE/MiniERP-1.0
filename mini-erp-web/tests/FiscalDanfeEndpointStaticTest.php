@@ -1,0 +1,2 @@
+<?php
+declare(strict_types=1);$s=(string)file_get_contents(__DIR__.'/../public/fiscal_danfe.php');foreach(['application/pdf','Content-Disposition','attachment','inline','X-Content-Type-Options','FiscalDanfeService']as$n)if(!str_contains($s,$n))throw new RuntimeException($n);foreach(['storage_reference','db_name','tenant_id']as$n)if(str_contains($s,"GET['{$n}']"))throw new RuntimeException('unsafe '.$n);echo"FiscalDanfeEndpointStatic OK\n";

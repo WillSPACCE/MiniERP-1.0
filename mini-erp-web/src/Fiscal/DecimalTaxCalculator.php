@@ -1,0 +1,5 @@
+<?php
+declare(strict_types=1);
+namespace MiniErp\Fiscal;
+use RuntimeException;
+final class DecimalTaxCalculator { public function __construct(){if(!extension_loaded('bcmath'))throw new RuntimeException('BCMath é obrigatório para cálculo fiscal.');} public function itemTotal(string $q,string $price):string{return bcmul($q,$price,2);} public function percentage(string $base,string $rate,int $scale=2):string{$raw=bcdiv(bcmul($base,$rate,8),'100',8);$factor='1'.str_repeat('0',$scale);$rounded=bcdiv(bcadd(bcmul($raw,$factor,$scale+2),'0.5',1),'1',0);return bcdiv($rounded,$factor,$scale);} public function calculate(FiscalTaxContext $c,FiscalTaxResolution $r):array{$base=$this->itemTotal($c->quantity,$c->unitPrice);$groups=[];foreach(['icms'=>$r->icms,'ipi'=>$r->ipi,'pis'=>$r->pis,'cofins'=>$r->cofins,'ibs_cbs'=>$r->ibsCbs,'is'=>$r->selectiveTax] as $name=>$rule){$groups[$name]=$rule;if(isset($rule['rate'])){$groups[$name]['base']=$base;$groups[$name]['amount']=$this->percentage($base,(string)$rule['rate']);}}return ['item_total'=>$base,'taxes'=>$groups,'rounding'=>'BCMath decimal; half-up 2 decimals somente na prévia TEST_ONLY'];} }

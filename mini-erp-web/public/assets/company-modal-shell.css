@@ -1,0 +1,1 @@
+#company-main-modal .app-modal__surface{grid-template-rows:auto auto auto minmax(0,1fr) auto;height:min(92vh,900px)}#company-main-modal .app-modal__header,#company-main-modal .app-modal__footer{position:relative}@media(max-width:720px){#company-main-modal .app-modal__surface{height:100dvh}}

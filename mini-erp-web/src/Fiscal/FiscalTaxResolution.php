@@ -1,0 +1,4 @@
+<?php
+declare(strict_types=1);
+namespace MiniErp\Fiscal;
+final readonly class FiscalTaxResolution { public function __construct(public string $cfop,public array $icms,public array $ipi,public array $pis,public array $cofins,public array $ibsCbs,public array $selectiveTax,public int $ruleId,public string $ruleCode,public int $ruleVersion,public string $source,public string $effectiveDate,public array $matchedBy,public string $explanation){} public static function fromRule(FiscalTaxRule $r):self{return new self($r->cfop,$r->icms,$r->ipi,$r->pis,$r->cofins,$r->ibsCbs,$r->selectiveTax,(int)$r->id,$r->code,$r->version,$r->sourceDocument.' '.$r->sourceVersion,$r->validFrom->format('Y-m-d'),array_keys($r->conditions),'Regra '.$r->code.' v'.$r->version.' selecionada por '.implode(', ',array_keys($r->conditions)).'.');} }

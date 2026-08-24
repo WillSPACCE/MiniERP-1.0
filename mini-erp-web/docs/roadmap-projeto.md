@@ -11,6 +11,62 @@ Este documento consolida a lista de tarefas, marcos e progresso do projeto Mini 
 - Servidor PHP local: rodando em `http://192.168.1.107:8000`
 - Base de arquitetura: legado em PHP puro, com plano de evolução para estrutura modular
 
+## Fase 3.5 — Reparo do Control-Plane e padronização visual
+
+### UI-01 — UTF-8 + visual do Control-Plane
+Status: concluído
+
+Itens concluídos:
+- Diagnóstico da causa raiz do mojibake em `public/plataforma`;
+- Correção de textos corrompidos em `_layout.php`, `login.php`, `_context.php`, `operacoes-multitenant.php`, `minha-conta.php` e `empresa-database.php`;
+- Garantia de `charset=UTF-8` no HTML do painel;
+- Padronização visual por tokens em `public/assets/platform.css`;
+- Criação do teste de regressão `tests/PlatformUiUtf8RegressionTest.php`;
+- Registro documentação em `docs/platform/PLATFORM-UI-01-control-plane-ui.md` e `docs/manual-tests/PLATFORM-UI-01.md`.
+
+Resultado:
+- Painel administrativo com textos corretos e identidade visual consistente sem afetar o ERP ou o tenant-data-plane.
+
+### FISCAL-CERT-01 — validação segura do certificado A1
+Status: concluído
+
+Itens concluídos:
+- correção do fluxo de upload/teste/ativação de certificado em `empresa-fiscal-config.php`;
+- estruturação de diagnóstico do certificado com `code`, `message` e `diagnostic` em `A1CertificateInspector`;
+- diferenciação segura entre senha inválida, arquivo corrompido, identidade divergente, expiração e falha criptográfica;
+- validação obrigatória antes de ativação e preservação do estado anterior;
+- documentação em `docs/fiscal/FISCAL-CERT-01-certificate-validation.md`, `docs/fiscal/contracts/certificate-validation-result.md` e `docs/manual-tests/FISCAL-CERT-01.md`.
+
+Resultado:
+- o certificado só é ativado quando passa em validação estrutural, identidade, criptografia e validade, sem expor segredos ou permitir ativação por falha insegura.
+
+### FISCAL-CERT-02 — fechamento operacional do certificado A1
+Status: concluído com prova de runtime local
+
+Itens concluídos:
+- resolução da causa raiz da persistência da chave mestre: `FISCAL_SECRET_KEY` agora usa ambiente externo ou arquivo local persistente fora de `public/`;
+- `FiscalMasterKey` gera a chave uma vez e reaproveita a mesma em processos independentes;
+- `config.php` não expõe a chave no payload de configuração;
+- `OperationalCertificateProvider` valida o certificado ativo em read-back real do storage privado;
+- documentações em `docs/fiscal/FISCAL-CERT-02-operational-certificate.md`, `docs/fiscal/contracts/operational-certificate-provider.md` e `docs/manual-tests/FISCAL-CERT-02.md`;
+- teste de persistência entre processos `tests/Fiscal02CrossProcessSecretPersistenceTest.php` com resultado `CERTIFICATE_CROSS_PROCESS_READ=PASS`.
+
+Resultado:
+- o certificado A1 agora sobrevive a reinício de processo, garante leitura do storage privado e recuperação da senha criptografada sem expor segredos ou depender de comunicação com a SEFAZ.
+
+### PLATFORM-UI-02 + FISCAL-CERT-03 — refinamento visual do Control-Plane e UX final do certificado A1
+Status: concluído
+
+Itens concluídos:
+- compactação do visual do Control-Plane em `public/assets/platform.css`;
+- ajuste do login administrativo para um card compacto e consistente;
+- refinamento do painel de certificado para leitura mais direta e status mais claro;
+- criação do teste de regressão `tests/PlatformUiRefinementRegressionTest.php`;
+- documentação em `docs/platform/PLATFORM-UI-02-visual-refinement.md` e `docs/manual-tests/PLATFORM-UI-02.md`.
+
+Resultado:
+- painel administrativo mais enxuto, profissional e responsivo, com UX final do certificado em linguagem consistente com o restante do Control-Plane.
+
 ---
 
 ## Fase 0 — Diagnóstico e preparação
@@ -811,6 +867,82 @@ Itens planejados:
 
 ## Pendências e próximos passos
 
+### FISCAL-01 — Cadastro fiscal completo de Empresa/Estabelecimento
+
+Status: implementado e aceito fisicamente no tenant local 14 pela FISCAL-01A. O modelo `establishments`, as duas UIs, validação, readiness e testes isolados/reais existem. O rollout nos demais bancos dedicados é manual, com backup e confirmação. Próxima task: `FISCAL-02 — Certificado/Segredos`.
+
+### FISCAL-01A — Aceitação física do estabelecimento
+
+Status: concluída para o tenant local 14. Migration aplicada após backup; schema MariaDB e round-trip transacional validados; fixture removida por rollback; Painel autenticado validado por HTTP; template de novos tenants contém `establishments`. Os demais tenants permanecem em rollout controlado conforme `docs/fiscal/FISCAL-01A-rollout.md`. O login visual do ERP não foi repetido por ausência de credencial fornecida e a autenticação não foi modificada.
+
+### FISCAL-01C — Onboarding empresarial e fiscal
+
+Status: implementado. Nova Empresa conduz Identificação → Provisionamento → Fiscal → Confirmação; o detalhe separa lifecycle de completude fiscal, apresenta abas e próximas ações; Fiscal possui formulário organizado e rastreabilidade `emit/enderEmit`; Painel e ERP preservam `establishments` como fonte única. Certificado, emissão e integrações fiscais continuam pendentes.
+
+### FISCAL-01D — Fechamento do emitente e padrão de campos
+
+Status: implementado. Cobertura `emit/enderEmit` fechada com UI, backend, coluna, round-trip e validação; completude separa cadastro, identidade fiscal, endereço e contato; regras reutilizáveis e backlogs FISCAL-03, FISCAL-04, FISCAL-06, FISCAL-07 e FISCAL-TECH-01 registrados. Nenhuma entidade futura ou emissão foi implementada.
+
+### FISCAL-03 — Pessoa/Destinatário/Fornecedor
+
+Status: implementado incrementalmente. `clientes` é Pessoa canônica com papéis múltiplos; PF/PJ/estrangeiro, indIEDest, inscrições, país, contato e endereço possuem UI/backend/schema/round-trip. Fornecedores e transportadoras legados permanecem preservados; grupos são gap. Migration aplicada somente no tenant 14 após backup.
+
+### FISCAL-04 — Produto Fiscal
+
+Status: implementado incrementalmente e validado no tenant 14. `produtos` concentra atributos permanentes e comerciais, GTIN comercial/tributável, NCM, CEST, origem canônica, EX TIPI, cBenef, FCI, unidades e conversão. `ProductFiscalCompleteness` não bloqueia o cadastro comercial incompleto. `product_taxes` permanece legado não autoritativo; CFOP final e impostos são responsabilidade do futuro TaxEngine/operação/snapshot.
+
+### FISCAL-05 — Motor Tributário Versionado
+
+Status: fundação implementada e validada com regras exclusivamente `TEST_ONLY`. Contexto/resolução imutáveis, repositório isolado, vigência, versionamento, prioridade, especificidade, conflito e ausência fail-closed, grupos tributários estruturados, CFOP final, explicação e prévia BCMath. Schema tenant-scoped aplicado no tenant 14 após backup, sem regra fiscal de produção.
+
+### FISCAL-06 — Pedido/Saída, Espelho e Documento Fiscal Interno
+
+Status: implementado incrementalmente. Pedido comercial, Espelho imutável versionado e Documento Fiscal Interno transacional/idempotente são entidades distintas. Snapshots de partes, Produto, valores e TaxResolution foram implementados; sem regra real o status é `FISCAL_PENDING`. Entrada reutiliza a arquitetura. Nenhuma emissão ou baixa nova de estoque foi implementada.
+
+### FISCAL-06A — Finalização do runtime da Saída
+
+Status: implementado. Listar, abrir, editar e atualizar Pedido; visualizar/imprimir Espelhos versionados; visualizar Documentos e pendências; marcar documento desatualizado; isolamento/IDOR e regressão comprovados. Financeiro e transporte preservam os campos existentes, com backlogs explícitos para parcelas e volumes.
+
+### ERP-FIX-02 — Navegação dos cadastros e prévias fiscais 55/65
+
+Status: implementado. A navegação legada dos cadastros permanece separada e as prévias fiscais passaram a respeitar o modelo persistido do pedido: DANFE A4 para modelo 55 e DANFC-e em bobina para modelo 65. As telas usam exclusivamente snapshots internos, exibem marca d'água de documento sem valor fiscal e mantêm chave, protocolo, QR Code e XML indisponíveis enquanto os artefatos fiscais reais não existirem. O contrato futuro desses artefatos foi documentado; emissão SEFAZ continua fora do escopo.
+
+### FISCAL-06B — Numeração, chave e pipeline seguro do XML
+
+Status: parcialmente implementado e bloqueado em fail-closed. Foram preparados schema/template aditivos, alocador transacional e idempotente, chave de acesso com DV alfanumérico vigente, DTO de snapshots e storage seguro com SHA-256. Composer permanece ausente e o NFePHP não foi instalado/validado contra CNPJ alfanumérico, RTC e schemas 2026; por isso nenhum builder, XML fiscal, botão de preparação ou download foi integrado ao runtime. Migration não aplicada e banco não alterado.
+
+### FISCAL-06B-A — Toolchain Composer, NFePHP e schemas
+
+Status: toolchain local implementada, decisão final `BLOCKED`. Composer oficial 2.10.2, lock reproduzível e NFePHP v5.2.8 passaram em plataforma, auditoria, autoload, PHP 8.2, RTC/IBS/CBS/IS/cClassTrib e CNPJ/chave alfanuméricos. Os XSD embarcados param em `PL_010_V1.30` e não são iguais aos pacotes oficiais mais recentes publicados no Portal NF-e; FISCAL-06B-B não deve iniciar até reconciliação/versionamento dos schemas vigentes.
+
+### FISCAL-06B-B — XSD oficial e XML unsigned
+
+Status: `BLOCKED` após reconciliação oficial. Pacotes `010e v1.02` e `010d v1.03` foram obtidos e versionados com checksums; builder estrutural 55/65 foi comprovado sem persistência. O XSD oficial exige `ds:Signature` no tipo `TNFe`, portanto XML completo unsigned não pode alcançar `XSD_VALID`. Como assinatura é proibida nesta task, migration/runtime/UI não foram ativados e nenhuma numeração foi consumida.
+
+### PLATFORM-02A1 — Reconciliação profunda e Database Manager read-only
+
+Status: concluída sem writes nos tenants 1–5. Git provou que 2→1, 3→2 e 4→3 vieram do script de três fixtures; tenants 1–4 são TEST_CONFIRMED e tenant 5 é USER_PRESERVE_CONFIRMED. Inspector/comparator profundo e viewer read-only com masking foram implementados. Escrita do Database Manager continua bloqueada até migração controlada do tenant 5 e decisão explícita sobre fixtures 1–4.
+
+### PLATFORM-02A — Auditoria histórica e reconciliação dos tenants
+
+Status: concluída. Tenant 12 TEST_ONLY removido após backups; tenant 14 preservado/atualizado; UNKNOWN preservados; compartilhamento 1/2 bloqueado para revisão. Template v1 corrigido, `schema_version` aplicada no MAIN e provisionamento real comprovado com 27 tabelas/zero dados. Busca e paginação server-side adicionadas. Próxima task: PLATFORM-02B — Database Manager Administrativo.
+
+### FISCAL-02C — Fechamento operacional de certificado e séries
+
+Status: implementado em homologação offline. Navegação/cards, histórico, substituição atômica, desativação auditada, séries auditáveis e imutáveis após uso, readiness e teste real de 21 processos/cross-series foram fechados. Exportação, remoção definitiva, CSC, produção e SEFAZ permanecem bloqueados. Fundação liberada para avaliação da FISCAL-06B-C2.
+
+### FISCAL-02A/02B — Certificado A1 e séries fiscais
+
+Status: fundação e administração implementadas para homologação offline. Certificado é estabelecimento-scoped, validado fail-closed e guardado em storage privado; senha usa AES-256-GCM com chave externa. `fiscal_series` foi reutilizada, auditoria complementar adicionada e produção/download/CSC/SEFAZ permanecem bloqueados. Migration aplicada no tenant 14 somente após backup verificado; nenhum certificado ou série real foi cadastrado.
+
+### FISCAL-06B-C1 — Assinatura XML TEST_ONLY e XSD offline
+
+Status: concluída como prova técnica local, sem integração ao runtime. `FiscalXmlSigner` encapsula `Certificate::readPfx` e `Signer::sign` do NFePHP; certificado RSA/X.509/PFX autassinado e senha aleatória existem somente em memória durante o teste. Modelos 55/65, CNPJ alfanumérico, grupos clássicos, IPI e cenário RTC/IS passaram XMLDSig e XSD oficial `010e v1.02`; adulteração invalida a assinatura. Banco, numeração real, certificado de cliente, QR/CSC, UI, SEFAZ, protocolo e autorização não foram tocados.
+
+### FISCAL-06B-C2 — Certificado configurado → XML assinado → XSD → Artifact
+
+Status: `BLOCKED` em runtime real. A base técnica foi provada em memória/test-only, mas não existe integração tenant-scoped, certificado do estabelecimento em storage protegido, alocação real de número, idempotência persistente, `certificate_ready` validado, `FiscalDocumentDTO` montado a partir de snapshots reais, `FiscalArtifactStorage` persistido fora de `public/`, ou download seguro. Nem o banco MariaDB foi usado para gravar reserva, assinatura ou artifact do pipeline real. O fluxo atual continua sem aceitar `tpAmb=1`, sem `SEFAZ` e sem QR/CSC. A task só deve ser reaberta após a integração real do certificado do estabelecimento, `FiscalNumberAllocator`, `FiscalDocumentDTO` de snapshot, `FiscalXmlSigner` com chave protegida e validação XSD sobre arquivo persistido no storage seguro.
+
 ### Críticos
 - Validar login do sistema em ambiente real
 - Testar fluxo de empresa/tenant completo
@@ -841,7 +973,197 @@ O projeto avançou de um estado de falha operacional para um ambiente funcional 
 
 ## Backlog técnico de implementação da T3-01
 
-Status: backlog de implementação da fundação multi-tenant, sem execução de código nesta etapa.
+Status: fundação multi-tenant parcialmente implementada de forma isolada, ainda sem integração ao runtime principal.
+
+### Baseline reconciliado em 2026-08-20 — PLATFORM-00
+
+Este baseline registra o estado comprovável dos artefatos existentes sem reescrever o histórico das investigações. Os estados usados abaixo têm significado estrito:
+
+- **DOCUMENTADO**: decisão, investigação ou especificação registrada, sem implementação correspondente comprovada;
+- **IMPLEMENTADO ISOLADAMENTE**: código e testes existem fora do fluxo HTTP de produção;
+- **INTEGRADO AO RUNTIME**: o comportamento está ligado ao fluxo atual de `public/index.php`;
+- **PENDENTE**: os critérios principais ainda não possuem implementação comprovada.
+
+| Task | Estado real | Evidência e limite |
+|---|---|---|
+| T3-01-IMP01 | IMPLEMENTADO ISOLADAMENTE | `src/Context/TenantContext.php` e `tests/TenantContextTest.php`; não usado pelo runtime principal. |
+| T3-01-IMP02 | IMPLEMENTADO ISOLADAMENTE | `src/Adapters/LegacyTenantContextInput.php` e teste próprio; não compõe requests reais. |
+| T3-01-IMP03 | IMPLEMENTADO ISOLADAMENTE | `src/Adapters/LegacyContextAdapter.php` e teste próprio; não está ligado ao entrypoint legado. |
+| T3-01-IMP04 | IMPLEMENTADO ISOLADAMENTE | `src/Context/TenantContextResolver.php` e testes; não governa login ou seleção de tenant em produção. |
+| T3-01-IMP05 | IMPLEMENTADO ISOLADAMENTE | `src/Infrastructure/TenantConnectionResolver.php` existe; sua validação completa depende de testes com MariaDB, e o runtime continua usando `Database::setTenantDbName()`. |
+| T3-01-IMP06 | IMPLEMENTADO ISOLADAMENTE | `tests/TenantContextIntegrationTest.php` materializa a prova controlada, mas depende de MariaDB real e não integra o fluxo HTTP. |
+| T3-01-IMP07 | IMPLEMENTADO ISOLADAMENTE | `tests/TenantIsolationTest.php` cobre cenários A/B, negativos e de imutabilidade, mas depende de MariaDB real e não prova integração ao runtime. |
+| T3-01-FUT01 | DOCUMENTADO | Investigação concluída; não implementa identidade nem autorização administrativa. |
+| T3-01-FUT01A | IMPLEMENTADO ISOLADAMENTE | `SelectedTenant` e `SelectedTenantResolver` validam uma lista confiável recebida e um sinal de autorização; não existe autorização persistida nem composição HTTP real. |
+| T3-01-FUT01B | IMPLEMENTADO ISOLADAMENTE | `AdministrativeContext` existe e exige seleção explicitamente autorizada; não é construído pelo runtime. |
+| T3-01-FUT02 | IMPLEMENTADO ISOLADAMENTE | `CreateUserForTenantRequest`, `CreateUserForTenantService` e `UserRepositoryContract` existem e possuem teste em memória; o fluxo web não usa o service. |
+| T3-01-FUT03 | INTEGRADO AO RUNTIME (ESCOPO LIMITADO) | `create_tenant_user` deixou de trocar/restaurar temporariamente `tenant_id` e `current_company_id` e usa atribuição explícita; outras seleções legadas por sessão permanecem fora do escopo desta task. |
+| T3-01-FUT04 | IMPLEMENTADO PARCIALMENTE / INTEGRADO EM UM FLUXO | `MainDbUserRepository::assignUserToCompanyExplicit()` grava associação explícita e é chamado por `create_tenant_user`; a consistência canônica global entre `tenant_id` e `company_id` ainda não está resolvida. |
+| T3-01-FUT05 | PENDENTE | Não há prova isolada do login completo produzindo `UserTenant`/`EffectiveTenant`; o login de produção continua legado. |
+| T3-01-FUT06 | PENDENTE | A fundação possui testes de resolução de conexão, mas o ERP de produção ainda não usa `TenantContext` + `TenantConnectionResolver`. |
+
+### Estado reconciliado da PLATFORM-01
+
+- especificação: **concluída e aprovada para v1**;
+- implementação integrada: **não iniciada no baseline PLATFORM-00; iniciada posteriormente pela PLATFORM-01-T01**;
+- fundações reutilizáveis: **parcialmente implementadas de forma isolada**.
+
+No baseline PLATFORM-00, o Painel da Plataforma ainda não possuía entrypoint próprio, autenticação própria de `PlatformAdmin`, autorização persistida, composição real de `AdministrativeContext`, lifecycle próprio, auditoria, `last_login`/histórico, políticas próprias de bloqueio, provisionamento rastreável ou UI própria. Os componentes isolados acima não representavam implementação do control-plane naquele momento.
+
+#### Atualização após PLATFORM-01-T01
+
+PLATFORM-01-T01 implementou o primeiro recorte integrado em `public/plataforma/`: login próprio, sessão `platform_user_id`, logout administrativo, identidade sem tenant, autorização transitória e dashboard com listagem no MAIN. A autorização usa allowlist de IDs e, por decisão operacional temporária posterior, aceita também o registro ativo `admin@localhost` com senha `admin`. Essa exceção não é política definitiva, não concede tenant e deverá ser removida quando houver identidade PlatformAdmin persistida. A task não compôs `AdministrativeContext` nem abriu data-plane.
+
+#### Backlog do Painel da Plataforma — não executado
+
+1. `PLATFORM-01-T02` — Cadastro e edição de empresa no Painel. **IMPLEMENTADO E INTEGRADO AO CONTROL-PLANE**.
+2. `PLATFORM-01-T03` — Lifecycle/status da empresa. **IMPLEMENTADO E INTEGRADO À APRESENTAÇÃO DO CONTROL-PLANE, SEM TRANSIÇÕES PERSISTIDAS**.
+3. `PLATFORM-01-T04` — Provisionamento do banco dedicado. **IMPLEMENTADO; EXECUÇÃO REAL SOMENTE POR CONFIRMAÇÃO MANUAL POST+CSRF**.
+4. `PLATFORM-01-T05` — Template/schema versionado. **IMPLEMENTADO E INTEGRADO; NOVOS PROVISIONAMENTOS DEPENDEM DE MIGRATION MAIN NÃO APLICADA**.
+5. `PLATFORM-01-T06` — Gestão de usuários da empresa. **IMPLEMENTADA E INTEGRADA AO CONTROL-PLANE; VALIDADA SEM ESCRITA REAL/BROWSER**.
+6. `PLATFORM-01-T07` — Bloqueio parcial e total.
+7. `PLATFORM-01-T08` — Últimos logins e auditoria.
+8. `PLATFORM-01-T09` — Acesso Técnico/Master.
+9. `PLATFORM-01-T10` — Rota `/empresa/{slug}` e integração com ERP.
+
+T02–T06 foram implementadas posteriormente em seus escopos próprios. T10A foi integrada depois; T07–T09 e o restante de T10 permanecem pendentes.
+
+##### Estado real da PLATFORM-01-T06
+
+- `mini_erp.usuarios` adotado como diretório canônico, com `tenant_id` explícito;
+- listagem, criação, edição, ativação/desativação e redefinição de senha implementadas;
+- e-mail globalmente único conforme constraint real do MAIN;
+- todas as operações em usuário existente são tenant-scoped e protegidas contra IDOR;
+- tabela `usuarios` local dos tenants não é sincronizada nem usada como segunda autoridade;
+- empresa não provisionada permanece sem gestão; empresa bloqueada continua administrável sem alterar bloqueio;
+- testes unitários/estáticos passaram, mas nenhum usuário MariaDB real ou teste de browser foi executado;
+- T07–T09, o restante de T10 e BRANCH-01–06 permanecem pendentes.
+
+##### Estado real da PLATFORM-01-T10A
+
+Status: **IMPLEMENTADO E INTEGRADO AO NOVO RUNTIME `/erp/`**.
+
+- autenticação canônica em `mini_erp.usuarios`, com `password_verify` e usuário ativo;
+- vínculo obrigatório entre o `tenant_id` do usuário e o tenant identificado pelo slug;
+- empresa ativa, não bloqueada e provisionada antes do acesso;
+- sessão isolada em `erp_user_id` e `erp_tenant_id`;
+- `TenantContext` conectado ao banco dedicado via `TenantConnectionResolver`;
+- dashboard, Clientes e Produtos em modo somente leitura;
+- logout ERP próprio, sem destruir a sessão do Control-Plane;
+- **Acessar ERP** abre o login da empresa por slug, sem auto-login ou impersonação.
+
+PLATFORM-01-T10 permanece parcial. T10B (estabilização dos entrypoints do ERP), T10C (integração dos CRUDs ao banco tenant) e T10D (rota/link definitivo `/empresa/{slug}`) seguem pendentes. T07–T09 não foram executadas nesta task.
+
+##### PLATFORM-01-T10R — Reintegração ao ERP existente
+
+Status: **IMPLEMENTADO**. A autenticação segura da T10A foi mantida e integrada ao dashboard/layout legado por uma ponte única antes da criação do `Repository`. A interface ERP simplificada da T10A foi removida; `/erp/` ficou restrito a login e redirecionamento. O T10B anterior foi **SUPERADO/REPLANEJADO** sem execução própria.
+
+Backlog vertical, não executado:
+
+- ERP-CRUD-01 — Clientes
+- ERP-CRUD-02 — Produtos
+- ERP-CRUD-03 — Fornecedores
+- ERP-CRUD-04 — Funcionários
+- ERP-CRUD-05 — Transportadoras/Motoristas
+- ERP-CRUD-06 — Vendas
+- ERP-CRUD-07 — Configurações/fiscal
+
+##### ERP-CRUD-01 — Clientes
+
+Status: **IMPLEMENTADO E VALIDADO NO BANCO DEDICADO**. O formulário e a listagem legados foram preservados; cadastro, pesquisa, edição e exclusão usam o PDO entregue pelo contexto autenticado. A compatibilidade física cobre schemas de banco dedicado sem `tenant_id`, e `telefone`/`fone_principal` são mapeados explicitamente. O ciclo MariaDB real foi executado no tenant 14 com cleanup confirmado. ERP-CRUD-02–07 permanecem pendentes.
+
+---
+
+## Programa Fiscal-First
+
+Regra transversal: toda alteração em Empresa/Estabelecimento, Pessoa/Cliente, Fornecedor, Produto, CFOP, Tributação, Entrada/Saída, Pedido, Transporte, Pagamento ou Fiscal deve atualizar o mapa XML ↔ ERP, classificar a obrigatoriedade, provar persistência/round-trip e definir snapshot. MOC, XSD, NT e tabelas oficiais vigentes prevalecem sobre regras antigas do legado.
+
+1. `FISCAL-00 — Baseline/XML Data Map` — **CONCLUÍDO DOCUMENTALMENTE por FISCAL-MASTER-00**.
+2. `FISCAL-01 — Empresa/Estabelecimento Fiscal` — PENDENTE.
+3. `FISCAL-02 — Certificado/segredos` — PENDENTE.
+4. `FISCAL-03 — Pessoa/Destinatário` — PENDENTE.
+5. `FISCAL-04 — Produto Fiscal` — **IMPLEMENTADO INCREMENTALMENTE; MIGRATION APLICADA NO TENANT 14**.
+6. `FISCAL-05 — Motor Tributário` — **FUNDAÇÃO IMPLEMENTADA; SEM REGRAS FISCAIS DE PRODUÇÃO**.
+7. `FISCAL-06 — Saída/Pedido Fiscal` — **IMPLEMENTADO INCREMENTALMENTE; SEM EMISSÃO**.
+8. `FISCAL-07 — Entrada Fiscal` — PENDENTE.
+9. `FISCAL-08 — FiscalDocumentValidator/Snapshot` — PENDENTE.
+10. `FISCAL-09 — Integração NFePHP` — PENDENTE; decisão preliminar `ADOPT_WITH_CONDITIONS`.
+11. `FISCAL-10 — XML Builder` — PENDENTE.
+12. `FISCAL-11 — XSD` — PENDENTE.
+13. `FISCAL-12 — Assinatura` — PENDENTE.
+14. `FISCAL-13 — Homologação SEFAZ` — PENDENTE.
+15. `FISCAL-14 — DANFE/DANFCE` — PENDENTE.
+16. `FISCAL-15 — Eventos` — PENDENTE.
+17. `FISCAL-16 — Produção` — PENDENTE e bloqueado até critérios formais.
+
+### Reorientação dos CRUDs
+
+- ERP-CRUD-01 Clientes: funcional/isolado; fiscalmente parcial, reconciliado com o mapa.
+- ERP-CRUD-02 Produtos: antes da implementação, alinhar com FISCAL-04 e separar cadastro, operação, tributação e snapshot.
+- ERP-CRUD-03 Fornecedores: alinhar com Pessoa e FISCAL-07; evitar identidade duplicada.
+- ERP-CRUD-04 Usuários: sem autoridade fiscal; permissões futuras não carregam certificado/segredo.
+- ERP-CRUD-05 Transporte: alinhar com `transp` e snapshot.
+- ERP-CRUD-06 Vendas: alinhar com FISCAL-06, pagamentos, totais e snapshot.
+- ERP-CRUD-07 Configurações/fiscal: substituído/decomposto pelo programa FISCAL-01–16.
+
+Requisito futuro: `Tenant → Matriz → Filiais/Estabelecimentos`, cada qual com CNPJ, IE, endereço, certificado, séries, CSC e perfil fiscal próprios quando aplicável. Não foi escolhida topologia de banco por filial.
+
+##### PLATFORM-01-T10R2 — Login visual legado + dashboard legado real
+
+Status: **IMPLEMENTADO**. `public/login.php` é a interface oficial do login tenant e reutiliza integralmente seus assets/layout históricos. O botão **Acessar ERP** aponta diretamente para `/login.php?empresa={slug}`; a empresa exibida vem do MAIN pelo slug explícito, sem sessão antiga ou Default Tenant. O POST delega ao `ErpAuthenticationService` e abre o dashboard legado após validar a conexão dedicada.
+
+T10A permanece como fundação de segurança, T10R como ponte conceitual/runtime e T10R2 como correção visual e funcional. PLATFORM-01-T10 não está integralmente concluída porque os CRUDs ainda não foram validados.
+
+##### Estado real da PLATFORM-01-T05
+
+- template canônico atual: `database/tenant-template/v1/schema.sql`;
+- versão atual definida no backend por `TenantSchemaTemplate::CURRENT = v1`;
+- template limpo com nove tabelas operacionais, sem seeds, usuários ou registro local de tenants;
+- migration anulável de `schema_version` criada, mas não executada;
+- enquanto a coluna não existir, novos provisionamentos falham antes de criar banco;
+- tenants legados e tenant 14 permanecem com versão não identificada, sem classificação automática;
+- T06–T10 e BRANCH-01–06 permanecem pendentes.
+
+##### Estado real da PLATFORM-01-T03
+
+- lifecycle compatível implementado em código, sem migration e sem conversão automática dos tenants legados;
+- `ativo` legado é interpretado como `ativa`, enquanto status desconhecido fica fail-closed;
+- regras de transição foram declaradas e testadas, mas nenhuma rota persiste mudança de status;
+- listagem apresenta estado e ações coerentes; ações futuras usam placeholder autenticado sem efeitos;
+- `provisioning_status` e `schema_version` continuam pendentes de schema em task própria;
+- no encerramento da T03, T04 ainda não havia sido iniciada e nenhum banco, schema, migration, seed ou `db_name` havia sido criado/alterado.
+
+##### Estado real da PLATFORM-01-T04
+
+- provisionamento físico implementado sob confirmação explícita em POST com CSRF;
+- naming canônico e fechado: `mini_erp_tenant_{tenant_id}`, sem entrada externa de `db_name`;
+- fonte estrutural: somente `database/schema.sql`; seeds e dados de outros tenants são excluídos;
+- conflito físico, estado inválido, bloqueio e reprovisionamento falham de forma fechada;
+- MAIN só recebe `db_name` e `ativa` depois da validação integral da estrutura;
+- falha parcial não executa DROP automático e exige diagnóstico consciente;
+- tenant 14 não foi provisionado durante implementação ou testes automatizados.
+
+##### Backlog futuro — Matriz e Filiais
+
+1. `BRANCH-01` — Investigar e decidir modelo Matriz/Filiais: um banco por tenant com estabelecimentos internos versus um banco físico por filial.
+2. `BRANCH-02` — Cadastro de filial/estabelecimento dentro do ERP da empresa.
+3. `BRANCH-03` — Seleção dos dados iniciais da filial.
+4. `BRANCH-04` — Importação inicial Matriz → Filial como snapshot, sem sincronização contínua.
+5. `BRANCH-05` — Usuários e permissões por estabelecimento.
+6. `BRANCH-06` — Seleção e troca explícita de estabelecimento no ERP.
+
+Ao criar uma filial, o administrador poderá escolher Produtos, Clientes, Fornecedores, Funcionários, Transportadoras e Motoristas. Sem seleção, a filial começa sem esses cadastros. Vendas, financeiro, estoque/saldos, documentos fiscais, históricos e movimentações nunca serão copiados automaticamente. Nenhuma dessas tasks foi implementada na T04.
+
+##### Estado real da PLATFORM-01-T02
+
+- cadastro e edição administrativa: implementados em `public/plataforma/`;
+- persistência: somente tabela `tenants` do MAIN;
+- `tenant_id`: auto-increment canônico, nunca recebido como dado editável;
+- `company_id`: não usado pelo fluxo novo;
+- provisionamento/banco dedicado: não executado;
+- lifecycle formal: pendente para T03; T02 usa estado inicial fixo `cadastrada` e `db_name = NULL`;
+- bloqueio: somente exibido como compatibilidade, sem ação;
+- testes: unitários/em memória e inspeção estática, sem escrita real no MariaDB.
 
 Abaixo ficam as primeiras tasks de implementação após as investigações e desenhos concluídos em:
 
@@ -1472,7 +1794,7 @@ Abaixo ficam as primeiras tasks de implementação após as investigações e de
 
 ## Dependências da sequência principal
 
-A primeira sequência executável de implementação deve ser:
+A sequência originalmente definida foi:
 
 1. T3-01-IMP01 — TenantContext mínimo e imutável
 2. T3-01-IMP02 — Entrada normalizada do legado
@@ -1482,7 +1804,7 @@ A primeira sequência executável de implementação deve ser:
 6. T3-01-IMP06 — Prova de integração controlada
 7. T3-01-IMP07 — Validar isolamento A/B
 
-A primeira task de implementação é explicitamente:
+A primeira task de implementação originalmente indicada era:
 
 - T3-01-IMP01 — TenantContext mínimo e imutável
 
@@ -1503,7 +1825,7 @@ As tasks documentais/investigativas já concluídas continuam preservadas e inal
 
 Elas não foram renumeradas, reescritas nem apagadas. A nova seção apenas adiciona backlog de implementação da fundação multi-tenant sem mexer na cadeia documental existente.
 
-## Restrição desta execução
+## Restrição da execução documental que criou este backlog
 
 - nenhuma task de implementação foi executada;
 - nenhum código foi implementado;
@@ -1513,9 +1835,9 @@ Elas não foram renumeradas, reescritas nem apagadas. A nova seção apenas adic
 
 ---
 
-## Resumo executivo do backlog
+## Resumo executivo reconciliado do backlog
 
-A sequência de implementação desce da menor unidade possível de contexto para a resolução mínima do banco e a prova controlada de isolamento. A primeira task executável é a criação do `TenantContext` mínimo e imutável, seguida pela normalização da borda, do adapter, do resolver e da infraestrutura de conexão. Somente após essas provas é que o backlog passa para o fluxo de usuário, autorização e integração real ao ERP.
+A sequência originalmente planejada descia da menor unidade de contexto para a resolução do banco e a prova controlada de isolamento. O repositório já contém implementações isoladas de IMP01–IMP07 e fundações parciais da sequência FUT, conforme o baseline PLATFORM-00 acima, mas elas não governam o runtime principal. A próxima task recomendada passa a ser `PLATFORM-01-T01 — Bootstrap autenticado e somente leitura do Control-Plane`; ela não foi executada durante a reconciliação.
 
 ### T3-02 — Migrar entidades e regras de negócio
 Status: pendente
@@ -1577,3 +1899,41 @@ Itens planejados:
 ## Observações finais
 
 O projeto avançou de um estado de falha operacional para um ambiente funcional local, com MySQL restaurado e servidor PHP rodando. O próximo grande passo é a migração arquitetural em camadas, mantendo o sistema legado estável enquanto a nova estrutura é organizada e validada.
+# Baseline PLATFORM-02A2 — 2026-08-22
+
+- Limpeza comprovada: tenants TEST_CONFIRMED 1–4 e bancos demo `_1`, `_2`, `_3` removidos após backups verificados.
+- Preservação: tenants 5 e 14 e bancos `_5`, `_14` mantidos.
+- Tenant 5: migrations aditivas aplicadas, dados preservados, mas fechamento bloqueado por migration com `DROP INDEX`; status real `OUTDATED_OR_DRIFT`, schema_version não promovido.
+- Tenant 14: validado somente leitura e classificado `OUTDATED_OR_DRIFT`; nenhuma correção automática.
+- Provisionamento TEST_ONLY: schema v1, zero-data e cleanup confirmados.
+- PLATFORM-02A2: **BLOCKED** para conclusão integral. PLATFORM-02B WRITE: **NÃO autorizada**.
+
+## PLATFORM-02A3 — 2026-08-22
+
+- Tenants 5 e 14 reconciliados para `CURRENT_WITH_LEGACY`, com dados comprovadamente preservados.
+- Histórico/checksum por tenant implementado.
+- Operações Multi-tenant disponível em READ-ONLY + DRY-RUN; execução real desabilitada.
+- Database Manager continua read-only.
+
+## PLATFORM-AUTH-01 — 2026-08-22
+
+- Autenticação do Control-Plane separada de `usuarios` e dos tenants.
+- `platform_admin_users`, auditoria, lockout, sessão exclusiva, logout, bootstrap/reset CLI e troca de senha implementados.
+- Fallback `admin@localhost/admin` e `PLATFORM_ADMIN_USER_IDS` removidos do runtime do Painel.
+- Nenhum administrador real ou senha padrão criado automaticamente.
+
+## PLATFORM-02B — 2026-08-22
+
+- Operações Multi-tenant concluídas com autenticação por `platform_admin_users.id`, somente `SUPER_ADMIN` e CSRF obrigatório.
+- Catálogo oficial de migrations, checksum SHA-256, dependências explícitas, risco e target `TENANT` validados.
+- Dry-run obrigatório com `plan_id` expiring em 600s e auditoria de `MULTITENANT_DRY_RUN`.
+- Execução real sequencial por tenant com backup obrigatório, lock, validação pós-execução e registro em `tenant_schema_migrations` com `source = PLATFORM_MULTI_TENANT`.
+- Resultados parciais `PARTIAL`, `BLOCKED`, `BACKUP_FAILED`, `CHECKSUM_MISMATCH`, `DEPENDENCY_MISSING` e `TARGET_MISMATCH` implementados e validados.
+- `Database Manager` continua `READ-ONLY` e a execução multi-tenant não aceita SQL livre.
+- Teste MariaDB focado validou dry-run, backup, `SUCCESS`, `PARTIAL`, double submit, lock concorrente, checksum, dependência, destructive bloqueado, `MAIN` bloqueado e auditoria.
+# ERP-FORM-01 — concluído
+
+BrasilAPI CNPJ centralizada com DTO normalizado, suporte alfanumérico, endpoints autenticados, cobertura ERP/Control-Plane, non-overwrite, cache/rate-limit e FormState seguro com PRG. Consulte `docs/erp/ERP-FORM-01-brasilapi-cnpj.md`.
+# FISCAL-CONFIG-01 — Central Fiscal da Empresa
+
+Estruturas, serviço, repository, UI Control-Plane, CSC cifrado, auditoria, validações e readiness estrutural implementados. Migration aguarda validação em banco artificial e rollout manual com backup; nenhum tenant real foi alterado.

@@ -1,7 +1,40 @@
 <?php
-// Página de entrada dedicada. O formulário envia para index.php que processa a ação 'login'.
-?>
-<?php
+declare(strict_types=1);
+
+// A UI histórica permanece intacta; este controller adiciona o fluxo tenant seguro.
+if (session_status() === PHP_SESSION_NONE) session_start();
+$tenantSlug = strtolower(trim(is_string($_GET['empresa'] ?? null) ? $_GET['empresa'] : ''));
+$tenantLogin = $tenantSlug !== '';
+$tenantDisplay = null;
+$tenantReader = null;
+$tenantUnavailable = false;
+$tenantDisplayName = '';
+
+if ($tenantLogin) {
+    require_once __DIR__ . '/../src/Contracts/ErpAuthenticationReaderContract.php';
+    require_once __DIR__ . '/../src/Context/AuthenticatedTenantUser.php';
+    require_once __DIR__ . '/../src/Context/TenantContext.php';
+    require_once __DIR__ . '/../src/Adapters/LegacyTenantContextInput.php';
+    require_once __DIR__ . '/../src/Context/TenantContextResolver.php';
+    require_once __DIR__ . '/../src/Infrastructure/ControlPlaneConnectionFactory.php';
+    require_once __DIR__ . '/../src/Infrastructure/TenantConnectionResolver.php';
+    require_once __DIR__ . '/../src/Repositories/MainDbErpAuthenticationReader.php';
+    require_once __DIR__ . '/../src/Services/ErpAuthenticationResult.php';
+    require_once __DIR__ . '/../src/Services/ErpAuthenticationService.php';
+    try {
+        $main = (new \MiniErp\Infrastructure\ControlPlaneConnectionFactory(__DIR__ . '/../config.php'))->create();
+        $tenantReader = new \MiniErp\Repositories\MainDbErpAuthenticationReader($main);
+        $tenantDisplay = $tenantReader->findTenantBySlug($tenantSlug);
+        $tenantUnavailable = $tenantDisplay === null;
+        if ($tenantDisplay !== null) {
+            $storedName = trim((string) ($tenantDisplay['nome_fantasia'] ?: $tenantDisplay['razao_social']));
+            $tenantDisplayName = mb_convert_case($storedName, MB_CASE_TITLE, 'UTF-8');
+        }
+    } catch (Throwable) {
+        $tenantUnavailable = true;
+    }
+}
+
 // mostra mensagens de erro simples quando redirecionado de `index.php`
 $loginError = '';
 if (!empty($_GET['error'])) {
@@ -17,27 +50,54 @@ if (!empty($_GET['error'])) {
 if (!empty($_GET['registered'])) {
     $loginError = 'Conta criada. Verifique seu e-mail para confirmar o acesso.';
 }
-// If tenant resolved in session, load its data for display
-$tenantDisplay = null;
-if (session_status() === PHP_SESSION_NONE) session_start();
-require_once __DIR__ . '/../app/Database.php';
-require_once __DIR__ . '/../app/Repository.php';
-$repo = new Repository();
-if (!empty($_SESSION['tenant_id'])) {
-    $tenantDisplay = $repo->findCompany((int)$_SESSION['tenant_id']);
+
+if ($tenantUnavailable) {
+    $loginError = 'Empresa indisponível ou link inválido.';
 }
+
+if ($tenantLogin && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    if (!hash_equals((string) ($_SESSION['erp_login_csrf'] ?? ''), (string) ($_POST['csrf_token'] ?? ''))) {
+        $loginError = 'Sessão expirada. Atualize a página e tente novamente.';
+    } elseif ($tenantReader === null || $tenantDisplay === null) {
+        $loginError = 'Empresa indisponível ou link inválido.';
+    } else {
+        try {
+            $result = (new \MiniErp\Services\ErpAuthenticationService($tenantReader, new \MiniErp\Context\TenantContextResolver()))
+                ->authenticate((string) ($_POST['email'] ?? ''), (string) ($_POST['senha'] ?? ''), $tenantSlug);
+            $tenantPdo = (new \MiniErp\Infrastructure\TenantConnectionResolver(__DIR__ . '/../config.php'))->resolve($result->tenantContext);
+            $expectedDatabase = 'mini_erp_tenant_' . $result->tenantContext->getEffectiveTenantId();
+            if (!hash_equals($expectedDatabase, (string) $tenantPdo->query('SELECT DATABASE()')->fetchColumn())) {
+                throw new DomainException('A conexão resolvida não corresponde à empresa autenticada.');
+            }
+            session_regenerate_id(true);
+            $_SESSION['erp_user_id'] = $result->identity->getUserId();
+            $_SESSION['erp_tenant_id'] = $result->tenantContext->getEffectiveTenantId();
+            $_SESSION['erp_tenant_slug'] = (string) $result->tenant['slug'];
+            header('Location: /?page=dashboard');
+            exit;
+        } catch (DomainException) {
+            $loginError = 'Credenciais inválidas ou empresa indisponível.';
+        } catch (Throwable) {
+            $loginError = 'Não foi possível abrir o ERP com segurança.';
+        }
+    }
+}
+
+$_SESSION['erp_login_csrf'] ??= bin2hex(random_bytes(32));
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
+    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png">
     <title>Login - Mini ERP</title>
     <!-- Favicons and manifest -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/Favicon/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon/favicon-16x16.png">
-    <link rel="shortcut icon" href="/assets/images/Favicon/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/Favicon-v2/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
     <link rel="manifest" href="/assets/images/site.webmanifest">
     <meta name="theme-color" content="#1e88e5">
     <meta name="description" content="Acesse o Mini ERP - sistema de gestão">
@@ -66,14 +126,15 @@ if (!empty($_SESSION['tenant_id'])) {
                 </form>
             </div>
             <div class="form-container sign-in-container">
-                <form method="POST" action="/?page=login">
-                    <input type="hidden" name="action" value="login">
+                <form method="POST" action="<?= $tenantLogin ? '/login.php?empresa=' . rawurlencode($tenantSlug) : '/?page=login' ?>">
+                    <input type="hidden" name="action" value="<?= $tenantLogin ? 'tenant_login' : 'login' ?>">
+                    <?php if ($tenantLogin): ?><input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['erp_login_csrf'], ENT_QUOTES, 'UTF-8') ?>"><?php endif; ?>
                     <h1>Entrar</h1>
                     <?php if($loginError): ?>
                         <div class="login-error" role="alert" style="color:#c62828;margin-bottom:12px;font-weight:700;"><?php echo htmlspecialchars($loginError); ?></div>
                     <?php endif; ?>
                     <?php if (!empty($tenantDisplay)): ?>
-                        <div style="margin-bottom:8px;font-weight:700;">Empresa: <?= htmlspecialchars($tenantDisplay['nome_fantasia'] ?? $tenantDisplay['apelido'] ?? '') ?></div>
+                        <div style="margin-bottom:8px;font-weight:700;">Empresa: <?= htmlspecialchars($tenantDisplayName, ENT_QUOTES, 'UTF-8') ?></div>
                         <?php if (!empty($tenantDisplay['logo'])): ?>
                             <div style="margin-bottom:8px;"><img src="<?= htmlspecialchars($tenantDisplay['logo']) ?>" alt="Logo" style="max-height:48px;"></div>
                         <?php endif; ?>
@@ -84,13 +145,13 @@ if (!empty($_SESSION['tenant_id'])) {
                         <a href="#" class="social">in</a>
                     </div>
                     <span>ou use sua conta</span>
-                    <input type="email" name="email" placeholder="Email" required />
+                    <input type="email" name="email" placeholder="Email" autocomplete="username" required />
                     <div class="password-wrap">
-                        <input type="password" name="senha" placeholder="Senha" required aria-describedby="togglePassword">
+                        <input type="password" name="senha" placeholder="Senha" autocomplete="current-password" required aria-describedby="togglePassword">
                         <button type="button" class="toggle-password" id="togglePassword" aria-label="Mostrar senha">👁️</button>
                     </div>
                     <a href="/forgot.php" class="forgot-link">Esqueceu sua senha?</a>
-                    <button type="submit" class="btn primary" id="loginBtn">Entrar</button>
+                    <button type="submit" class="btn primary" id="loginBtn" <?= $tenantUnavailable ? 'disabled' : '' ?>>Entrar</button>
                 </form>
             </div>
             <div class="overlay-container">

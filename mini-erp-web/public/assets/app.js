@@ -397,11 +397,11 @@ document.addEventListener('DOMContentLoaded', function () {
     function renderNoItems() {
         if (!tbody) return;
         if (tbody.querySelectorAll('tr.item-row').length === 0) {
-            tbody.innerHTML = '<tr class="no-items"><td colspan="8">Nenhum registro encontrado</td></tr>';
+            tbody.innerHTML = '<tr class="no-items"><td colspan="10">Nenhum registro encontrado</td></tr>';
         }
     }
 
-    function addItem(prod) {
+    function addItem(prod, saved = null) {
         if (!tbody) return;
         // remove placeholder
         const placeholder = tbody.querySelector('tr.no-items');
@@ -410,16 +410,18 @@ document.addEventListener('DOMContentLoaded', function () {
         const row = document.createElement('tr');
         row.className = 'item-row';
         const idx = itemIndex++;
-        const subtotal = prod.preco;
+        const subtotal = saved ? Number(saved.net_total) : prod.preco;
 
         row.innerHTML = `
             <td>${idx+1}</td>
             <td>${prod.codigo}</td>
             <td>${prod.nome}</td>
             <td>${prod.un || 'UN'}</td>
-            <td><input type="number" name="itens[${idx}][quantidade]" value="1" min="1" class="item-qty"></td>
-            <td><input type="number" step="0.01" name="itens[${idx}][preco_unitario]" value="${prod.preco}" class="item-preco"></td>
+            <td><input type="number" name="itens[${idx}][quantidade]" value="${saved ? saved.quantity : 1}" min="0.0001" step="0.0001" class="item-qty"></td>
+            <td><input type="number" step="0.0001" name="itens[${idx}][preco_unitario]" value="${saved ? saved.unit_price : prod.preco}" class="item-preco"></td>
+            <td><input type="number" step="0.01" min="0" name="itens[${idx}][desconto]" value="${saved ? saved.discount_amount : 0}" class="item-discount"></td>
             <td class="item-subtotal">${formatCurrencyBR(subtotal)}</td>
+            <td><span class="status-badge">Não avaliado</span></td>
             <td>
                 <button type="button" class="link-button btn-remove">Remover</button>
                 <input type="hidden" name="itens[${idx}][produto_id]" value="${prod.id}">
@@ -431,6 +433,7 @@ document.addEventListener('DOMContentLoaded', function () {
         // attach events
         row.querySelector('.item-qty').addEventListener('input', computeTotals);
         row.querySelector('.item-preco').addEventListener('input', computeTotals);
+        row.querySelector('.item-discount').addEventListener('input', computeTotals);
         row.querySelector('.btn-remove').addEventListener('click', function () { row.remove(); computeTotals(); renderNoItems(); });
 
         computeTotals();
@@ -549,6 +552,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Inicializa autocomplete quando houver campo de busca
     createAutocomplete();
+    (window.ORDER_ITEMS || []).forEach(saved => addItem({id:saved.id,codigo:saved.codigo,nome:saved.nome,un:saved.unidade,preco:saved.unit_price}, saved));
 
     function computeTotals() {
         if (!tbody) return;
@@ -556,7 +560,8 @@ document.addEventListener('DOMContentLoaded', function () {
         tbody.querySelectorAll('tr.item-row').forEach(row => {
             const qty = Number(row.querySelector('.item-qty').value) || 0;
             const price = Number(row.querySelector('.item-preco').value) || 0;
-            const subtotal = qty * price;
+            const discount = Number(row.querySelector('.item-discount')?.value) || 0;
+            const subtotal = Math.max(0, qty * price - discount);
             row.querySelector('.item-subtotal').textContent = formatCurrencyBR(subtotal);
             total += subtotal;
         });
@@ -615,8 +620,82 @@ document.addEventListener('DOMContentLoaded', function () {
 
 })();
 
+// A Central de Notas reutiliza o preview seguro do pedido e mantém a Central aberta.
+document.querySelectorAll('.notes-table tbody tr').forEach(function (row) {
+    const orderText = row.querySelector('td small')?.textContent || '';
+    const orderMatch = orderText.match(/#(\d+)/);
+    const actions = row.querySelector('.row-actions');
+    if (!orderMatch || !actions || actions.querySelector('[data-danfe-preview]')) return;
+    const model = row.querySelector('[data-label="Modelo"]')?.textContent.trim();
+    if (model !== '55' && model !== '65') return;
+    const link = document.createElement('a');
+    link.className = 'btn small';
+    link.href = '/fiscal_danfe_preview.php?order_id=' + encodeURIComponent(orderMatch[1]);
+    link.dataset.danfePreview = '';
+    link.textContent = model === '65' ? 'Prévia DANFC-e' : 'Prévia DANFE';
+    actions.querySelector('details')?.before(link);
+});
+
+// Preview do formulário: persiste o modelo selecionado e mantém a guia do ERP intacta.
+const fiscalModelSelect = document.getElementById('fiscal-model-select');
+const fiscalPreviewSubmit = document.getElementById('fiscal-preview-submit');
+const fiscalOrderForm = document.getElementById('pedido-form');
+function syncFiscalPreviewLabel() {
+    if (fiscalPreviewSubmit && fiscalModelSelect) fiscalPreviewSubmit.textContent = fiscalModelSelect.value === '65' ? 'Prévia DANFC-e' : 'Prévia DANFE';
+}
+fiscalModelSelect?.addEventListener('change', syncFiscalPreviewLabel);
+syncFiscalPreviewLabel();
+fiscalOrderForm?.addEventListener('submit', async function (event) {
+    if (event.submitter !== fiscalPreviewSubmit) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!fiscalOrderForm.querySelector('tr.item-row')) {
+        alert('Adicione ao menos um produto ao pedido.');
+        return;
+    }
+    const previewWindow = window.open('', '_blank');
+    if (!previewWindow) {
+        alert('O navegador bloqueou a nova guia. Permita pop-ups para abrir a prévia fiscal.');
+        return;
+    }
+    previewWindow.document.write('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Gerando prévia fiscal</title><body style="font:16px system-ui;padding:32px"><h1>MiniERP</h1><p>Gerando Prévia Fiscal...</p></body></html>');
+    fiscalPreviewSubmit.disabled = true;
+    const originalLabel = fiscalPreviewSubmit.textContent;
+    fiscalPreviewSubmit.textContent = 'Gerando...';
+    try {
+        const data = new FormData(fiscalOrderForm);
+        data.set('fiscal_action', 'preview');
+        const response = await fetch('/fiscal_action.php', {method:'POST', body:data, credentials:'same-origin', headers:{Accept:'application/json'}});
+        const result = await response.json();
+        if (!response.ok || !result.success || !result.danfe_url) throw new Error(result.error_message || 'Não foi possível gerar a prévia fiscal.');
+        const orderField = fiscalOrderForm.querySelector('input[name="order_id"]');
+        if (orderField && result.order_id) orderField.value = String(result.order_id);
+        previewWindow.location.href = result.danfe_url;
+    } catch (error) {
+        previewWindow.document.open();
+        previewWindow.document.write('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Prévia indisponível</title><body style="font:16px system-ui;padding:32px"><h1>Não foi possível gerar a prévia fiscal.</h1><p>Revise os dados do pedido e tente novamente.</p><button onclick="window.close()">Fechar</button></body></html>');
+        previewWindow.document.close();
+    } finally {
+        fiscalPreviewSubmit.disabled = false;
+        fiscalPreviewSubmit.textContent = originalLabel;
+        syncFiscalPreviewLabel();
+    }
+}, true);
+
 // Mostrar modal de impostos quando clicar no nome do produto na tabela de itens
 document.addEventListener('click', function (e) {
+    const previewLink = e.target.closest && e.target.closest('[data-danfe-preview]');
+    if (previewLink) {
+        e.preventDefault();
+        const previewWindow = window.open('', '_blank');
+        if (!previewWindow) {
+            alert('O navegador bloqueou a nova guia. Permita pop-ups para abrir a prévia fiscal.');
+            return;
+        }
+        previewWindow.document.write('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Gerando prévia DANFE</title><body style="font:16px system-ui;padding:32px"><p>Gerando prévia DANFE...</p></body></html>');
+        previewWindow.location.href = previewLink.href;
+        return;
+    }
     const target = e.target;
     if (target && target.tagName === 'TD' && target.parentElement && target.parentElement.classList.contains('item-row')) {
         // coluna descrição (index 2)

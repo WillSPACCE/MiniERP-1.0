@@ -1,0 +1,21 @@
+{
+  "retrieved_at": "2026-08-21",
+  "source": "https://hom.nfe.fazenda.gov.br/Portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w=",
+  "runtime_package": "010e-v1.02/NFe",
+  "packages": [
+    {
+      "id": "010e-v1.02",
+      "published_at": "2026-07-10",
+      "notes": ["NT 2025.002 v1.40", "NT 2026.002 v1.0", "NT 2026.003 v1.0"],
+      "download": "https://hom.nfe.fazenda.gov.br/Portal/exibirArquivo.aspx?conteudo=lxjvtPfGzo8=",
+      "zip_sha256": "D44AE5AA6A0D1CABF6235D2D2D47B75BE5DD87BC6B90A7EC3DCEC99C3D41BDA1"
+    },
+    {
+      "id": "010d-v1.03",
+      "published_at": "2026-07-10",
+      "notes": ["NT 2026.004 v1.01", "CNPJ alfanumérico"],
+      "download": "https://hom.nfe.fazenda.gov.br/Portal/exibirArquivo.aspx?conteudo=5ZkvIZt10mQ=",
+      "zip_sha256": "45CEEFE4DFBBFEC93958283B650A2F1E1734784F4770D070B9907754DE081D9B"
+    }
+  ]
+}

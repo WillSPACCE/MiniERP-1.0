@@ -1,0 +1,16 @@
+<?php
+declare(strict_types=1);
+namespace MiniErp\Fiscal;
+use NFePHP\Common\Certificate;use RuntimeException;
+final class A1CertificateInspector {
+ public function __construct(private?int$now=null,private?CertificateBusinessIdentityResolver$identityResolver=null){}
+ public function inspect(string$content,string$password,string$fileName,string$expectedTaxId):array{
+  $ext=strtolower(pathinfo($fileName,PATHINFO_EXTENSION));if(!in_array($ext,['pfx','p12'],true))throw new RuntimeException('Formato do arquivo inválido. Use apenas .pfx ou .p12.');if($content===''||strlen($content)>5242880)throw new RuntimeException('Certificado vazio ou maior que 5 MB.');if(trim($password)==='')throw new RuntimeException('Senha do certificado não foi informada.');
+  try{$cert=Certificate::readPfx($content,$password);}catch(\Throwable$e){throw new RuntimeException('PASSWORD_INVALID: senha incorreta ou PKCS#12 ilegível.',0,$e);}
+  $parsed=openssl_x509_parse((string)$cert->publicKey,false);if(!is_array($parsed))throw new RuntimeException('UNREADABLE: X.509 não reconhecido.');$identity=($this->identityResolver??new CertificateBusinessIdentityResolver())->resolve($cert,$parsed,$expectedTaxId);$from=(int)($parsed['validFrom_time_t']??0);$to=(int)($parsed['validTo_time_t']??0);$now=$this->now??time();$status=$from>$now?'NOT_YET_VALID':($to<=$now?'EXPIRED':(($to-$now)<=30*86400?'EXPIRING_SOON':'VALID'));
+  $proof='MINIERP CERTIFICATE TEST ONLY '.bin2hex(random_bytes(16));try{$signature=$cert->sign($proof,OPENSSL_ALGO_SHA256);if(!$cert->verify($proof,$signature,OPENSSL_ALGO_SHA256))throw new RuntimeException('verify');}catch(\Throwable$e){throw new RuntimeException('Certificado falhou no teste criptográfico local.',0,$e);}
+  if($identity['status']!=='MATCH')$status='INVALID_IDENTITY';$operational=in_array($status,['VALID','EXPIRING_SOON'],true);$taxId=(string)($identity['certificate_tax_id']??'');
+  return['certificate'=>$cert,'file_name'=>basename($fileName),'extension'=>$ext,'sha256'=>hash('sha256',$content),'fingerprint_sha256'=>str_replace(':','',strtolower((string)openssl_x509_fingerprint((string)$cert->publicKey,'sha256'))),'subject'=>$this->dn($parsed['subject']??[]),'issuer'=>$this->dn($parsed['issuer']??[]),'serial_number'=>(string)($parsed['serialNumberHex']??$parsed['serialNumber']??''),'tax_id'=>$taxId,'identity'=>$identity,'identity_source'=>$identity['source'],'identity_status'=>$identity['status'],'expected_tax_id'=>$identity['expected_tax_id'],'valid_from'=>date('Y-m-d H:i:s',$from),'valid_until'=>date('Y-m-d H:i:s',$to),'days_remaining'=>(int)floor(($to-$now)/86400),'status'=>$status,'operational'=>$operational,'private_key_available'=>true,'local_signature'=>true,'code'=>$operational?'CERTIFICATE_VALID':'CERTIFICATE_'.$status,'message'=>$operational?'Certificado A1 validado.':'O certificado foi armazenado com segurança, porém não foi ativado.','diagnostic'=>'CNPJ esperado: '.$identity['expected_tax_id'].'; CNPJ extraído: '.($taxId?:'NOT_FOUND').'; resultado: '.$identity['status'].'; origem: '.$identity['source'].'.'];
+ }
+ private function dn(array$dn):string{$parts=[];foreach($dn as$key=>$value)$parts[]=$key.'='.(is_array($value)?implode('+',$value):$value);return implode(', ',$parts);}
+}

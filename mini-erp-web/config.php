@@ -1,5 +1,12 @@
 <?php
 
+require_once __DIR__ . '/src/Fiscal/FiscalMasterKey.php';
+
+use MiniErp\Fiscal\FiscalMasterKey;
+
+FiscalMasterKey::resolve(__DIR__);
+date_default_timezone_set(getenv('APP_TIMEZONE') ?: 'America/Sao_Paulo');
+
 // Arquivo de configuração central da aplicação.
 // Aqui ficam as informações de conexão com o banco de dados e outros parâmetros globais.
 return [

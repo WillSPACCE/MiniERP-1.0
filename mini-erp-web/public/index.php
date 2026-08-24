@@ -3,16 +3,56 @@
 // Carrega as classes essenciais da aplicação.
 require_once __DIR__ . '/../app/Database.php';
 require_once __DIR__ . '/../app/Repository.php';
+require_once __DIR__ . '/../src/Contracts/TaxRuleRepositoryContract.php';
+require_once __DIR__ . '/../src/Fiscal/FiscalTaxContext.php';
+require_once __DIR__ . '/../src/Fiscal/FiscalTaxRule.php';
+require_once __DIR__ . '/../src/Fiscal/FiscalTaxResolution.php';
+require_once __DIR__ . '/../src/Fiscal/TaxRuleResolver.php';
+require_once __DIR__ . '/../src/Repositories/MariaDbTaxRuleRepository.php';
+require_once __DIR__ . '/../src/Repositories/FiscalOperationRepository.php';
+require_once __DIR__ . '/../src/Repositories/IssuedOrdersRepository.php';
+require_once __DIR__ . '/../src/Repositories/FiscalDocumentEventRepository.php';
+require_once __DIR__ . '/../src/Services/CreateInternalFiscalDocumentService.php';
+require_once __DIR__ . '/../src/Services/FlashFormState.php';
+require_once __DIR__ . '/includes/fiscal_preview.php';
 
 // Inicia sessão para autenticação cedo, antes de decidir qual DB usar
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Se já existe tenant na sessão, tenta obter `db_name` do tenant na base principal
+// Ponte localizada entre a sessão ERP segura e o runtime legado.
+$secureErpRuntime = null;
+$hasErpSession = !empty($_SESSION['erp_user_id']) || !empty($_SESSION['erp_tenant_id']);
+if ($hasErpSession) {
+    require_once __DIR__ . '/../src/Contracts/ErpAuthenticationReaderContract.php';
+    require_once __DIR__ . '/../src/Context/AuthenticatedTenantUser.php';
+    require_once __DIR__ . '/../src/Context/TenantContext.php';
+    require_once __DIR__ . '/../src/Adapters/LegacyTenantContextInput.php';
+    require_once __DIR__ . '/../src/Adapters/ErpLegacyBootstrap.php';
+    require_once __DIR__ . '/../src/Context/TenantContextResolver.php';
+    require_once __DIR__ . '/../src/Infrastructure/ControlPlaneConnectionFactory.php';
+    require_once __DIR__ . '/../src/Infrastructure/TenantConnectionResolver.php';
+    require_once __DIR__ . '/../src/Repositories/MainDbErpAuthenticationReader.php';
+    require_once __DIR__ . '/../src/Services/ErpAuthenticationResult.php';
+    require_once __DIR__ . '/../src/Services/ErpAuthenticationService.php';
+    try {
+        $main = (new \MiniErp\Infrastructure\ControlPlaneConnectionFactory(__DIR__ . '/../config.php'))->create();
+        $erpReader = new \MiniErp\Repositories\MainDbErpAuthenticationReader($main);
+        $erpAuthentication = new \MiniErp\Services\ErpAuthenticationService($erpReader, new \MiniErp\Context\TenantContextResolver());
+        $secureErpRuntime = (new \MiniErp\Adapters\ErpLegacyBootstrap($erpReader, $erpAuthentication, new \MiniErp\Infrastructure\TenantConnectionResolver(__DIR__ . '/../config.php')))->bootstrap($_SESSION);
+        Database::useResolvedTenantConnection($secureErpRuntime['connection']);
+    } catch (Throwable) {
+        unset($_SESSION['erp_user_id'], $_SESSION['erp_tenant_id'], $_SESSION['user_id'], $_SESSION['tenant_id'], $_SESSION['current_company_id']);
+        header('Location: /erp/login.php?error=session');
+        exit;
+    }
+}
+
+// Fluxo legado preservado apenas quando não existe uma sessão ERP segura.
 $config = require __DIR__ . '/../config.php';
 $dbConf = $config['db'];
-if (!empty($_SESSION['tenant_id'])) {
+if ($secureErpRuntime === null && !empty($_SESSION['tenant_id'])) {
     try {
         $serverDsn = sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $dbConf['host'], $dbConf['port'], $dbConf['database']);
         $adminPdo = new PDO($serverDsn, $dbConf['username'], $dbConf['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
@@ -28,14 +68,14 @@ if (!empty($_SESSION['tenant_id'])) {
 }
 
 // Cria o repositório que interage com o banco (agora que tenant DB já foi decidido)
-$repo = new Repository();
+$repo = new Repository($secureErpRuntime['connection'] ?? null, $secureErpRuntime === null);
 
 // Resolve tenant from URL slug (first segment) when present.
 // Example: /mercado-silva/login  -> tenant slug = mercado-silva
 $currentTenant = null;
 $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 $pathSegments = array_values(array_filter(explode('/', $requestPath)));
-if (!empty($pathSegments)) {
+if ($secureErpRuntime === null && !empty($pathSegments)) {
     $first = $pathSegments[0];
     // avoid matching assets and known files
     $ignore = ['assets', 'favicon.ico', 'login.php', 'index.php', 'forgot.php', 'reset.php'];
@@ -62,6 +102,29 @@ $flash = [
     'success' => '',
     'error' => '',
 ];
+$failedClienteData = null;
+$failedFormData = null;
+$failedFormAction = '';
+$restoredFormState = \MiniErp\Services\FlashFormState::consume($_SESSION);
+if ($restoredFormState !== null) {
+    $failedFormAction = $restoredFormState['action'];
+    $failedFormData = $restoredFormState['old_input'];
+    $flash['error'] = reset($restoredFormState['errors']) ?: 'Revise os campos informados.';
+    if ($failedFormAction === 'save_cliente') $failedClienteData = $failedFormData;
+}
+$_SESSION['erp_client_csrf'] ??= bin2hex(random_bytes(32));
+$_SESSION['erp_establishment_csrf'] ??= bin2hex(random_bytes(32));
+$_SESSION['erp_fiscal_csrf'] ??= bin2hex(random_bytes(32));
+setcookie('erp_fiscal_csrf', (string)$_SESSION['erp_fiscal_csrf'], ['expires'=>0,'path'=>'/','secure'=>!empty($_SERVER['HTTPS']),'httponly'=>true,'samesite'=>'Strict']);
+$erpEstablishmentService = null; $erpEstablishment = null; $erpEstablishmentSchemaAvailable = false;
+if ($secureErpRuntime !== null) {
+    require_once __DIR__ . '/../src/Contracts/EstablishmentRepositoryContract.php'; require_once __DIR__ . '/../src/Repositories/TenantEstablishmentRepository.php';
+    require_once __DIR__ . '/../src/Services/EstablishmentData.php'; require_once __DIR__ . '/../src/Services/EstablishmentService.php'; require_once __DIR__ . '/../src/Services/FiscalReadiness.php'; require_once __DIR__ . '/includes/establishment_form.php';
+    $erpEstablishmentRepository = new \MiniErp\Repositories\TenantEstablishmentRepository($secureErpRuntime['connection']); $erpEstablishmentService = new \MiniErp\Services\EstablishmentService($erpEstablishmentRepository);
+    $erpEstablishmentSchemaAvailable = $erpEstablishmentRepository->schemaAvailable(); $erpTenantId = $secureErpRuntime['result']->tenantContext->getEffectiveTenantId(); $erpEstablishment = $erpEstablishmentService->find($erpTenantId);
+}
+if (!empty($_GET['client_saved'])) $flash['success'] = 'Cliente salvo com sucesso.';
+if (!empty($_GET['client_deleted'])) $flash['success'] = 'Cliente removido com sucesso.';
 
 // Trata ações de formulário enviados via POST.
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
@@ -69,37 +132,48 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
     try {
         switch ($action) {
+            case 'save_establishment':
+                if ($erpEstablishmentService === null || !hash_equals((string) $_SESSION['erp_establishment_csrf'], (string) ($_POST['csrf_token'] ?? ''))) throw new RuntimeException('Sessão fiscal inválida.');
+                $erpTenantId = $secureErpRuntime['result']->tenantContext->getEffectiveTenantId(); $erpEstablishment = $erpEstablishmentService->save($erpTenantId, new \MiniErp\Services\EstablishmentData($_POST));
+                header('Location: ?page=configuracao&tab=empresa&fiscal_saved=1'); exit;
+
             case 'save_cliente':
+                if (!hash_equals((string) $_SESSION['erp_client_csrf'], (string) ($_POST['csrf_token'] ?? ''))) {
+                    throw new RuntimeException('Sessão expirada. Atualize a página e tente novamente.');
+                }
                 // Se fornecido CPF/CNPJ, tentar buscar dados na BrasilAPI para autopreencher
                 $cpfcnpjRaw = trim((string)($_POST['cpf_cnpj'] ?? ''));
                 if ($cpfcnpjRaw !== '') {
                     $cnpjData = $repo->fetchCnpjData($cpfcnpjRaw);
                     if (is_array($cnpjData)) {
-                        $_POST['nome'] = $_POST['nome'] ?? ($cnpjData['razao_social'] ?? $cnpjData['nome'] ?? '');
-                        $_POST['nome_fantasia'] = $_POST['nome_fantasia'] ?? ($cnpjData['nome_fantasia'] ?? '');
-                        $_POST['cep'] = $_POST['cep'] ?? ($cnpjData['cep'] ?? '');
-                        $_POST['uf'] = $_POST['uf'] ?? ($cnpjData['uf'] ?? '');
-                        $_POST['municipio'] = $_POST['municipio'] ?? ($cnpjData['municipio'] ?? '');
-                        $logradouro = trim((string)($cnpjData['descricao_tipo_de_logradouro'] ?? '') . ' ' . ($cnpjData['logradouro'] ?? ''));
+                        $_POST['nome'] = $_POST['nome'] ?? ($cnpjData['legal_name'] ?? '');
+                        $_POST['nome_fantasia'] = $_POST['nome_fantasia'] ?? ($cnpjData['trade_name'] ?? '');
+                        $_POST['cep'] = $_POST['cep'] ?? ($cnpjData['postal_code'] ?? '');
+                        $_POST['uf'] = $_POST['uf'] ?? ($cnpjData['state'] ?? '');
+                        $_POST['municipio'] = $_POST['municipio'] ?? ($cnpjData['city'] ?? '');
+                        $logradouro = trim((string)($cnpjData['street'] ?? ''));
                         if ($logradouro !== '') $_POST['logradouro'] = $_POST['logradouro'] ?? $logradouro;
-                        $_POST['numero'] = $_POST['numero'] ?? ($cnpjData['numero'] ?? '');
-                        $_POST['complemento'] = $_POST['complemento'] ?? ($cnpjData['complemento'] ?? '');
-                        $_POST['bairro'] = $_POST['bairro'] ?? ($cnpjData['bairro'] ?? '');
-                        $_POST['telefone'] = $_POST['telefone'] ?? ($cnpjData['ddd_telefone_1'] ?? '');
-                        $_POST['codigo_ibge'] = $_POST['codigo_ibge'] ?? ($cnpjData['codigo_ibge'] ?? $cnpjData['codigo_municipal'] ?? '');
+                        $_POST['numero'] = $_POST['numero'] ?? ($cnpjData['number'] ?? '');
+                        $_POST['complemento'] = $_POST['complemento'] ?? ($cnpjData['complement'] ?? '');
+                        $_POST['bairro'] = $_POST['bairro'] ?? ($cnpjData['district'] ?? '');
+                        $_POST['telefone'] = $_POST['telefone'] ?? ($cnpjData['phone_1'] ?? '');
+                        $_POST['codigo_ibge'] = $_POST['codigo_ibge'] ?? ($cnpjData['city_ibge_code'] ?? '');
                         $_POST['data'] = json_encode($cnpjData, JSON_UNESCAPED_UNICODE);
                     }
                 }
                 // Salva ou atualiza um cliente.
                 $repo->saveCliente($_POST);
-                $flash['success'] = 'Cliente salvo com sucesso.';
-                break;
+                header('Location: ?page=cadastro&tab=pessoas&client_saved=1');
+                exit;
 
             case 'delete_cliente':
+                if (!hash_equals((string) $_SESSION['erp_client_csrf'], (string) ($_POST['csrf_token'] ?? ''))) {
+                    throw new RuntimeException('Sessão expirada. Atualize a página e tente novamente.');
+                }
                 // Remove um cliente do banco.
                 $repo->deleteCliente((int) ($_POST['id'] ?? 0));
-                $flash['success'] = 'Cliente removido com sucesso.';
-                break;
+                header('Location: ?page=cadastro&tab=pessoas&client_deleted=1');
+                exit;
 
             case 'save_produto':
                 // Salva ou atualiza um produto.
@@ -148,23 +222,55 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $flash['success'] = 'Venda registrada com sucesso.';
                 break;
 
+            case 'save_fiscal_order':
+            case 'save_fiscal_mirror':
+            case 'save_internal_fiscal_document':
+                $tenantId = (int)($_SESSION['erp_tenant_id'] ?? $_SESSION['tenant_id'] ?? 0);
+                $userId = (int)($_SESSION['erp_user_id'] ?? $_SESSION['user_id'] ?? 0);
+                if ($tenantId < 1 || $userId < 1) throw new RuntimeException('Contexto autenticado obrigatório.');
+                if (!in_array((string)($_POST['fiscal_model'] ?? ''), ['55','65'], true)) throw new RuntimeException('FISCAL_DOCUMENT_MODEL_UNSUPPORTED');
+                if (($_POST['tipo'] ?? 'saida') === 'entrada') $_POST['cliente_id'] = $_POST['fornecedor_id'] ?? 0;
+                $operationRepo = new \MiniErp\Repositories\FiscalOperationRepository(Database::getConnection(), $tenantId);
+                $idempotencyKey = (string)($_POST['idempotency_key'] ?? '');
+                if ($_POST['action'] === 'save_internal_fiscal_document' && ($existingDocument = $operationRepo->findDocumentByKey($idempotencyKey))) {
+                    $flash['success'] = "Documento fiscal interno #{$existingDocument['id']} já havia sido gravado; nenhuma duplicação ocorreu.";
+                    break;
+                }
+                $orderId = (int)($_POST['order_id'] ?? 0);
+                if ($orderId > 0) $operationRepo->updateOrder($orderId, $_POST, $_POST['itens'] ?? []);
+                else $orderId = $operationRepo->createOrder($_POST, $_POST['itens'] ?? [], $userId);
+                if ($_POST['action'] === 'save_fiscal_mirror') {
+                    $mirrorId = $operationRepo->createMirror($orderId, $userId);
+                    $flash['success'] = "Pedido #{$orderId} e Espelho #{$mirrorId} gravados sem emissão fiscal.";
+                } elseif ($_POST['action'] === 'save_internal_fiscal_document') {
+                    $taxRepo = new \MiniErp\Repositories\MariaDbTaxRuleRepository(Database::getConnection(), $tenantId);
+                    $service = new \MiniErp\Services\CreateInternalFiscalDocumentService($operationRepo, new \MiniErp\Fiscal\TaxRuleResolver($taxRepo));
+                    $document = $service->create($orderId, $idempotencyKey, $userId);
+                    $events = new \MiniErp\Repositories\FiscalDocumentEventRepository(Database::getConnection(), $tenantId);
+                    $events->append((int)$document['id'],'DOCUMENT_CREATED','PRECHECK',(string)$document['status'],(string)$document['status'],$document['pending']?'Documento fiscal criado com pendências: '.implode('; ',$document['pending']):'Documento fiscal pronto para preparação local.',[], $userId);
+                    $flash['success'] = "Documento fiscal interno #{$document['id']} gravado como {$document['status']}; nenhuma NF-e foi emitida.";
+                } else {
+                    $flash['success'] = "Pedido #{$orderId} salvo sem baixa de estoque e sem emissão.";
+                }
+                break;
+
             case 'save_empresa':
                 // Se fornecido CNPJ, tentar buscar dados na BrasilAPI para autopreencher
                 $cnpjRaw = trim((string)($_POST['cnpj'] ?? ''));
                 if ($cnpjRaw !== '') {
                     $cnpjData = $repo->fetchCnpjData($cnpjRaw);
                     if (is_array($cnpjData)) {
-                        $_POST['razao_social'] = $_POST['razao_social'] ?? ($cnpjData['razao_social'] ?? '');
-                        $_POST['nome_fantasia'] = $_POST['nome_fantasia'] ?? ($cnpjData['nome_fantasia'] ?? '');
-                        $_POST['cep'] = $_POST['cep'] ?? ($cnpjData['cep'] ?? '');
-                        $_POST['uf'] = $_POST['uf'] ?? ($cnpjData['uf'] ?? '');
-                        $_POST['municipio'] = $_POST['municipio'] ?? ($cnpjData['municipio'] ?? '');
-                        $logradouro = trim((string)($cnpjData['descricao_tipo_de_logradouro'] ?? '') . ' ' . ($cnpjData['logradouro'] ?? ''));
+                        $_POST['razao_social'] = $_POST['razao_social'] ?? ($cnpjData['legal_name'] ?? '');
+                        $_POST['nome_fantasia'] = $_POST['nome_fantasia'] ?? ($cnpjData['trade_name'] ?? '');
+                        $_POST['cep'] = $_POST['cep'] ?? ($cnpjData['postal_code'] ?? '');
+                        $_POST['uf'] = $_POST['uf'] ?? ($cnpjData['state'] ?? '');
+                        $_POST['municipio'] = $_POST['municipio'] ?? ($cnpjData['city'] ?? '');
+                        $logradouro = trim((string)($cnpjData['street'] ?? ''));
                         if ($logradouro !== '') $_POST['logradouro'] = $_POST['logradouro'] ?? $logradouro;
-                        $_POST['numero'] = $_POST['numero'] ?? ($cnpjData['numero'] ?? '');
-                        $_POST['complemento'] = $_POST['complemento'] ?? ($cnpjData['complemento'] ?? '');
-                        $_POST['bairro'] = $_POST['bairro'] ?? ($cnpjData['bairro'] ?? '');
-                        $_POST['telefone'] = $_POST['telefone'] ?? ($cnpjData['ddd_telefone_1'] ?? '');
+                        $_POST['numero'] = $_POST['numero'] ?? ($cnpjData['number'] ?? '');
+                        $_POST['complemento'] = $_POST['complemento'] ?? ($cnpjData['complement'] ?? '');
+                        $_POST['bairro'] = $_POST['bairro'] ?? ($cnpjData['district'] ?? '');
+                        $_POST['telefone'] = $_POST['telefone'] ?? ($cnpjData['phone_1'] ?? '');
                         // opcional: armazenar payload bruto para auditoria
                         $_POST['data'] = json_encode($cnpjData, JSON_UNESCAPED_UNICODE);
                     }
@@ -369,18 +475,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 if ($cpfcnpjRaw !== '') {
                     $cnpjData = $repo->fetchCnpjData($cpfcnpjRaw);
                     if (is_array($cnpjData)) {
-                        $_POST['nome'] = $_POST['nome'] ?? ($cnpjData['razao_social'] ?? $cnpjData['nome'] ?? '');
-                        $_POST['nome_fantasia'] = $_POST['nome_fantasia'] ?? ($cnpjData['nome_fantasia'] ?? '');
-                        $_POST['cep'] = $_POST['cep'] ?? ($cnpjData['cep'] ?? '');
-                        $_POST['uf'] = $_POST['uf'] ?? ($cnpjData['uf'] ?? '');
-                        $_POST['municipio'] = $_POST['municipio'] ?? ($cnpjData['municipio'] ?? '');
-                        $logradouro = trim((string)($cnpjData['descricao_tipo_de_logradouro'] ?? '') . ' ' . ($cnpjData['logradouro'] ?? ''));
+                        $_POST['nome'] = $_POST['nome'] ?? ($cnpjData['legal_name'] ?? '');
+                        $_POST['nome_fantasia'] = $_POST['nome_fantasia'] ?? ($cnpjData['trade_name'] ?? '');
+                        $_POST['cep'] = $_POST['cep'] ?? ($cnpjData['postal_code'] ?? '');
+                        $_POST['uf'] = $_POST['uf'] ?? ($cnpjData['state'] ?? '');
+                        $_POST['municipio'] = $_POST['municipio'] ?? ($cnpjData['city'] ?? '');
+                        $logradouro = trim((string)($cnpjData['street'] ?? ''));
                         if ($logradouro !== '') $_POST['logradouro'] = $_POST['logradouro'] ?? $logradouro;
-                        $_POST['numero'] = $_POST['numero'] ?? ($cnpjData['numero'] ?? '');
-                        $_POST['complemento'] = $_POST['complemento'] ?? ($cnpjData['complemento'] ?? '');
-                        $_POST['bairro'] = $_POST['bairro'] ?? ($cnpjData['bairro'] ?? '');
-                        $_POST['telefone'] = $_POST['telefone'] ?? ($cnpjData['ddd_telefone_1'] ?? '');
-                        $_POST['codigo_ibge'] = $_POST['codigo_ibge'] ?? ($cnpjData['codigo_ibge'] ?? $cnpjData['codigo_municipal'] ?? '');
+                        $_POST['numero'] = $_POST['numero'] ?? ($cnpjData['number'] ?? '');
+                        $_POST['complemento'] = $_POST['complemento'] ?? ($cnpjData['complement'] ?? '');
+                        $_POST['bairro'] = $_POST['bairro'] ?? ($cnpjData['district'] ?? '');
+                        $_POST['telefone'] = $_POST['telefone'] ?? ($cnpjData['phone_1'] ?? '');
+                        $_POST['codigo_ibge'] = $_POST['codigo_ibge'] ?? ($cnpjData['city_ibge_code'] ?? '');
                         $_POST['data'] = json_encode($cnpjData, JSON_UNESCAPED_UNICODE);
                     }
                 }
@@ -504,6 +610,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 break;
 
             case 'logout':
+                if ($secureErpRuntime !== null) {
+                    $logoutTenantSlug = strtolower(trim((string) ($_SESSION['erp_tenant_slug'] ?? '')));
+                    unset($_SESSION['erp_user_id'], $_SESSION['erp_tenant_id'], $_SESSION['erp_tenant_slug'], $_SESSION['user_id'], $_SESSION['tenant_id'], $_SESSION['current_company_id'], $_SESSION['erp_login_csrf'], $_SESSION['erp_logout_csrf']);
+                    session_regenerate_id(true);
+                    header('Location: /login.php' . ($logoutTenantSlug !== '' ? '?empresa=' . rawurlencode($logoutTenantSlug) : ''));
+                    exit;
+                }
                 session_unset();
                 session_destroy();
                 header('Location: /login.php');
@@ -513,12 +626,28 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     } catch (Throwable $e) {
         // Captura qualquer erro e mostra a mensagem para o usuário.
         $flash['error'] = $e->getMessage();
+        if (str_starts_with((string) $action, 'save_')) {
+            $failedFormData = array_diff_key($_POST, array_flip(['senha', 'password', 'certificate_password', 'csrf_token']));
+            $failedFormAction = (string) $action;
+        }
+        if ($action === 'save_cliente') $failedClienteData = $failedFormData;
+        \MiniErp\Services\FlashFormState::store($_SESSION, (string)$action, $_POST, ['_form' => $e->getMessage()]);
+        $redirect = (string)($_SERVER['REQUEST_URI'] ?? '/');
+        if (str_starts_with($redirect, '/') && !str_contains($redirect, "\r") && !str_contains($redirect, "\n")) {
+            header('Location: ' . $redirect); exit;
+        }
     }
+}
+
+if ($failedFormAction === 'save_establishment' && is_array($failedFormData)) {
+    $erpEstablishment = array_merge($erpEstablishment ?? [], $failedFormData);
 }
 
 // Coleta os dados principais para uso nas telas.
 $currentUser = null;
-if (!empty($_SESSION['user_id'])) {
+if ($secureErpRuntime !== null) {
+    $currentUser = $secureErpRuntime['user'];
+} elseif (!empty($_SESSION['user_id'])) {
     $currentUser = $repo->findUsuarioById((int) $_SESSION['user_id']);
 }
 
@@ -529,7 +658,7 @@ if ($page !== 'login' && !$currentUser) {
 }
 
 $dashboard = $repo->getDashboardData();
-$clientes = $repo->listClientes();
+$clientes = $repo->listClientes((string) ($_GET['q'] ?? ''));
 $produtos = $repo->listProdutos();
 $vendas = $repo->listVendas();
 $cfops = $repo->listCfops();
@@ -542,43 +671,51 @@ $editCliente = null;
 if ($page === 'clientes' && isset($_GET['edit'])) {
     $editCliente = $repo->findCliente((int) $_GET['edit']);
 }
+if ($failedFormAction === 'save_cliente') $editCliente = $failedFormData;
 
 $editPessoa = null;
 if ($page === 'cadastro' && isset($_GET['tab']) && $_GET['tab'] === 'pessoas' && isset($_GET['edit'])) {
     $editPessoa = $repo->findCliente((int) $_GET['edit']);
 }
+if ($failedClienteData !== null) $editPessoa = $failedClienteData;
 
 // Busca o produto que será editado na tela de produtos.
 $editProduto = null;
 if ($page === 'produtos' && isset($_GET['edit'])) {
     $editProduto = $repo->findProduto((int) $_GET['edit']);
 }
+if ($failedFormAction === 'save_produto') $editProduto = $failedFormData;
 
 $editCfop = null;
 if ($page === 'cadastro' && isset($_GET['tab']) && $_GET['tab'] === 'cfops' && isset($_GET['edit'])) {
     $editCfop = $repo->findCfop((int) $_GET['edit']);
 }
+if ($failedFormAction === 'save_cfop') $editCfop = $failedFormData;
 
 $editFornecedor = null;
 if ($page === 'cadastro' && isset($_GET['tab']) && $_GET['tab'] === 'fornecedores' && isset($_GET['edit'])) {
     $editFornecedor = $repo->findFornecedor((int) $_GET['edit']);
 }
+if ($failedFormAction === 'save_fornecedor') $editFornecedor = $failedFormData;
 
 $editMotorista = null;
 if ($page === 'cadastro' && isset($_GET['tab']) && $_GET['tab'] === 'motoristas' && isset($_GET['edit'])) {
     $editMotorista = $repo->findMotorista((int) $_GET['edit']);
 }
+if ($failedFormAction === 'save_motorista') $editMotorista = $failedFormData;
 
 $editTransportadora = null;
 if ($page === 'cadastro' && isset($_GET['tab']) && $_GET['tab'] === 'transportadoras' && isset($_GET['edit'])) {
     $editTransportadora = $repo->findTransportadora((int) $_GET['edit']);
 }
+if ($failedFormAction === 'save_transportadora') $editTransportadora = $failedFormData;
 
 // Edit usuário (funcionário) via parametro
 $editUsuario = null;
 if ($page === 'configuracao' && isset($_GET['edit_user'])) {
     $editUsuario = $repo->findUsuarioById((int) $_GET['edit_user']);
 }
+if ($failedFormAction === 'save_usuario') $editUsuario = $failedFormData;
 
 // Formata dinheiro em reais para exibir no HTML.
 function formatCurrency(float $value): string
@@ -589,7 +726,7 @@ function formatCurrency(float $value): string
 // Define se o item do menu está ativo.
 function navClass(string $pageName, string $currentPage): string
 {
-    return $pageName === $currentPage ? 'active' : '';
+    return $pageName === $currentPage || ($pageName === 'pedidos' && $currentPage === 'fiscal_notes') ? 'active' : '';
 }
 
 // Detecta as imagens de logo disponíveis no diretório de assets (fallbacks).
@@ -623,15 +760,25 @@ if (is_dir($imagesDir)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
+    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png">
     <title>Mini ERP</title>
     <!-- Favicons -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/Favicon/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon/favicon-16x16.png">
-    <link rel="shortcut icon" href="/assets/images/Favicon/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/Favicon-v2/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
     <meta name="theme-color" content="#1e88e5">
     <link rel="stylesheet" href="/assets/style.css">
+    <link rel="stylesheet" href="/assets/issued-orders.css">
+    <link rel="stylesheet" href="/assets/app-ui.css">
+    <link rel="stylesheet" href="/assets/app-feedback.css">
+    <link rel="stylesheet" href="/assets/ui-forms.css">
+    <link rel="stylesheet" href="/assets/fiscal-notes.css">
     <script src="https://unpkg.com/feather-icons"></script>
+    <script src="/assets/cnpj-lookup.js" defer></script>
+    <script src="/assets/app-ui.js" defer></script>
+    <script src="/assets/app-feedback.js" defer></script>
 </head>
 <body>
     <div id="page-loader" class="page-loader" aria-hidden="false">
@@ -662,7 +809,7 @@ if (is_dir($imagesDir)) {
                         <ul class="drawer-submenu">
                             <li><a href="?page=pedidos&tab=entrada">Entrada</a></li>
                             <li><a href="?page=pedidos&tab=saida">Saída</a></li>
-                            <li><a href="?page=pedidos&tab=emitidos">Pedidos Emitidos</a></li>
+                            <li><a href="?page=pedidos&tab=emitidos">Pedidos Emitidos</a></li><li><a class="<?= $page === 'fiscal_notes' ? 'active' : '' ?>" href="?page=fiscal_notes">Central de Notas</a></li>
                         </ul>
                     </li>
 
@@ -709,6 +856,7 @@ if (is_dir($imagesDir)) {
                                 <a href="?page=pedidos&tab=entrada">Entrada</a>
                                 <a href="?page=pedidos&tab=saida">Saída</a>
                                 <a href="?page=pedidos&tab=emitidos">Pedidos Emitidos</a>
+                                <a class="<?= $page === 'fiscal_notes' ? 'active' : '' ?>" href="?page=fiscal_notes">Central de Notas</a>
                             </div>
                         </div>
                         <div class="menu-item-wrapper">
@@ -773,6 +921,20 @@ if (is_dir($imagesDir)) {
             <?php
             // Renderiza a seção correspondente à página ativa.
             switch ($page) {
+                case 'fiscal_notes':
+                    define('FISCAL_NOTES_EMBEDDED', true);
+                    ob_start();
+                    include __DIR__ . '/fiscal_notes.php';
+                    $fiscalNotesDocument = (string) ob_get_clean();
+                    if (preg_match('/(<section class="fiscal-notes-shell">.*?<\/section><\/section>).*?(<dialog id="fiscal-detail-modal".*?<\/dialog>)/s', $fiscalNotesDocument, $fiscalNotesParts)) {
+                        echo $fiscalNotesParts[1], $fiscalNotesParts[2];
+                    } else {
+                        echo '<section class="panel"><h2>Central de Notas</h2><p>Não foi possível montar a página. Tente novamente.</p></section>';
+                    }
+                    ?>
+                    <script src="/assets/fiscal-notes.js"></script>
+                    <?php
+                    break;
                 case 'company':
                     $companyId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
                     $company = $companyId ? $repo->findCompany($companyId) : null;
@@ -816,154 +978,112 @@ if (is_dir($imagesDir)) {
                     break;
                 case 'pedidos':
                     $tab = $_GET['tab'] ?? 'entrada';
+                    $fiscalOperationRepo = new \MiniErp\Repositories\FiscalOperationRepository(Database::getConnection(), (int)($_SESSION['erp_tenant_id'] ?? $_SESSION['tenant_id']));
+                    $issuedFilters=['q'=>mb_substr(trim((string)($_GET['io_q']??'')),0,120),'from'=>(string)($_GET['io_from']??''),'to'=>(string)($_GET['io_to']??''),'model'=>(string)($_GET['io_model']??''),'status'=>(string)($_GET['io_status']??'')];
+                    $issuedData=['rows'=>[],'total'=>0,'page'=>1,'pages'=>1,'per_page'=>20];
+                    if($tab==='emitidos'){
+                        try{$issuedData=(new \MiniErp\Repositories\IssuedOrdersRepository(Database::getConnection(),(int)($_SESSION['erp_tenant_id']??$_SESSION['tenant_id'])))->paginate($issuedFilters,(int)($_GET['io_page']??1),(int)($_GET['io_per_page']??20));}
+                        catch(\Throwable $issuedLoadError){error_log('ISSUED_ORDERS_LOAD_FAILED type='.get_class($issuedLoadError));$issuedLoadMessage='NÃ£o foi possÃ­vel carregar os pedidos emitidos.';}
+                        $fiscalOrders=$issuedData['rows'];
+                    }else{$fiscalOrders = $fiscalOperationRepo->listOrders($tab === 'entrada' ? 'ENTRY' : 'EXIT');}
+                    $editingOrder = isset($_GET['order_id']) ? $fiscalOperationRepo->order((int)$_GET['order_id']) : null;
+                    $previewCompanyModel = '55';
+                    if(!empty($erpEstablishment['id'])){
+                        try{
+                            $previewModelQuery = Database::getConnection()->prepare('SELECT primary_model FROM establishment_fiscal_settings WHERE tenant_id=? AND establishment_id=? LIMIT 1');
+                            $previewModelQuery->execute([(int)($_SESSION['erp_tenant_id'] ?? $_SESSION['tenant_id']),(int)$erpEstablishment['id']]);
+                            $configuredPreviewModel = (string)($previewModelQuery->fetchColumn() ?: '');
+                            if(in_array($configuredPreviewModel,['55','65'],true))$previewCompanyModel=$configuredPreviewModel;
+                        }catch(\Throwable $previewModelError){
+                            error_log('ORDER_PRIMARY_MODEL_READ_FAILED tenant='.(int)($_SESSION['erp_tenant_id'] ?? $_SESSION['tenant_id']).' type='.get_class($previewModelError));
+                        }
+                    }
+                    $previewSelectedModel = (string)($editingOrder['fiscal_model'] ?? $previewCompanyModel);
+                    $viewMirror = isset($_GET['mirror_id']) ? $fiscalOperationRepo->mirror((int)$_GET['mirror_id']) : null;
+                    $viewDocument = isset($_GET['document_id']) ? $fiscalOperationRepo->document((int)$_GET['document_id']) : null;
+                    if ($viewDocument) {
+                        $documentOrder = $fiscalOperationRepo->order((int)$viewDocument['source_order_id']);
+                        $viewDocument['totals']['model'] = $documentOrder['fiscal_model'];
+                    }
                     ?>
                     <section class="page-header">
                         <div>
                             <p class="eyebrow">Pedidos</p>
                             <h2>Pedidos</h2>
-                        // Autofill CNPJ: Reusa endpoint ajax_cnpj.php para clientes e fornecedores
-                        async function fetchCnpj(cnpj) {
-                            const url = 'ajax_cnpj.php?cnpj=' + encodeURIComponent(cnpj.replace(/\D/g, ''));
-                            const res = await fetch(url);
-                            if (!res.ok) throw new Error('Erro ao consultar CNPJ');
-                            return await res.json();
-                        }
-
-                        function applyCnpjToFields(prefix, data) {
-                            if (!data) return;
-                            const map = {
-                                nome: prefix + '_nome',
-                                nome_fantasia: prefix + '_nome_fantasia',
-                                cep: prefix + '_cep',
-                                logradouro: prefix + '_logradouro',
-                                numero: prefix + '_numero',
-                                complemento: prefix + '_complemento',
-                                bairro: prefix + '_bairro',
-                                municipio: prefix + '_municipio',
-                                uf: prefix + '_uf',
-                                cidade: prefix + '_cidade',
-                                telefone: prefix + '_telefone',
-                                codigo_ibge: prefix + '_codigo_ibge'
-                            };
-                            for (const key in map) {
-                                const el = document.getElementById(map[key]);
-                                if (!el) continue;
-                                const val = data[key] ?? data['municipio'] ?? data['cidade'] ?? '';
-                                el.value = val;
-                            }
-                        }
-
-                        document.getElementById('btn-buscar-cnpj-cliente')?.addEventListener('click', async function () {
-                            const cnpj = document.getElementById('cliente_cpf_cnpj')?.value || '';
-                            if (!cnpj) return alert('Informe o CNPJ/CPF primeiro.');
-                            try {
-                                const data = await fetchCnpj(cnpj);
-                                if (data && data.status === 404) return alert('CNPJ não encontrado.');
-                                applyCnpjToFields('cliente', data);
-                            } catch (e) { alert('Erro ao buscar CNPJ: ' + e.message); }
-                        });
-
-                        document.getElementById('btn-buscar-cnpj-fornecedor')?.addEventListener('click', async function () {
-                            const cnpj = document.getElementById('fornecedor_cpf_cnpj')?.value || '';
-                            if (!cnpj) return alert('Informe o CNPJ/CPF primeiro.');
-                            try {
-                                const data = await fetchCnpj(cnpj);
-                                if (data && data.status === 404) return alert('CNPJ não encontrado.');
-                                applyCnpjToFields('fornecedor', data);
-                            } catch (e) { alert('Erro ao buscar CNPJ: ' + e.message); }
-                        });
                         </div>
                     </section>
 
                     <div class="pedido-shell">
                         <?php if ($tab === 'emitidos'): ?>
-                            <div class="emitted-toolbar">
-                                <div class="field-wrap compact">
-                                    <label>Data Início</label>
-                                    <input type="text" placeholder="dd/mm/aaaa">
-                                </div>
-                                <div class="field-wrap compact">
-                                    <label>Data Fim</label>
-                                    <input type="text" placeholder="dd/mm/aaaa">
-                                </div>
-                                <div class="field-wrap compact">
-                                    <label>Tipo</label>
-                                    <select>
-                                        <option>Entrada e Saída</option>
-                                        <option>Entrada</option>
-                                        <option>Saída</option>
-                                    </select>
-                                </div>
-                                <div class="field-wrap compact">
-                                    <label>Origem</label>
-                                    <select>
-                                        <option>Pedidos e Comanda</option>
-                                        <option>Pedido</option>
-                                        <option>Comanda</option>
-                                    </select>
-                                </div>
-                                <button class="btn secondary btn-small" type="button">Atualizar Tela</button>
-                            </div>
+                            <form class="issued-filters" method="get">
+                                <input type="hidden" name="page" value="pedidos"><input type="hidden" name="tab" value="emitidos">
+                                <label>Pesquisar<input name="io_q" value="<?= htmlspecialchars($issuedFilters['q']) ?>" placeholder="Pedido, cliente, CPF/CNPJ ou chave"></label>
+                                <label>Data inicial<input type="date" name="io_from" value="<?= htmlspecialchars($issuedFilters['from']) ?>"></label>
+                                <label>Data final<input type="date" name="io_to" value="<?= htmlspecialchars($issuedFilters['to']) ?>"></label>
+                                <label>Modelo<select name="io_model"><option value="">Todos</option><option value="55"<?= $issuedFilters['model']==='55'?' selected':'' ?>>55 — NF-e</option><option value="65"<?= $issuedFilters['model']==='65'?' selected':'' ?>>65 — NFC-e</option></select></label>
+                                <label>Status<select name="io_status"><option value="">Todos</option><?php foreach(['NOT_CREATED'=>'Não iniciado','FISCAL_PENDING'=>'Pendente fiscal','FISCAL_READY'=>'Pronto','DOCUMENT_OUTDATED'=>'Documento desatualizado'] as $value=>$label): ?><option value="<?= $value ?>"<?= $issuedFilters['status']===$value?' selected':'' ?>><?= $label ?></option><?php endforeach; ?></select></label>
+                                <label>Por página<select name="io_per_page"><?php foreach([10,20,50,100] as $n): ?><option value="<?= $n ?>"<?= $issuedData['per_page']===$n?' selected':'' ?>><?= $n ?></option><?php endforeach; ?></select></label>
+                                <div class="issued-filter-actions"><button class="btn btn-small" type="submit">Filtrar</button><a class="btn btn-small secondary" href="?page=pedidos&amp;tab=emitidos">Limpar</a></div>
+                            </form>
 
-                            <div class="emitted-actions-row">
-                                <div class="inline-actions-left">
-                                    <span>Exibir</span>
-                                    <select class="mini-select">
-                                        <option>20</option>
-                                        <option>50</option>
-                                        <option>100</option>
-                                    </select>
-                                    <span>resultados por página</span>
-                                </div>
-
-                                <div class="inline-actions-right">
-                                    <input type="text" class="mini-input" placeholder="Pesquisar">
-                                    <button class="btn btn-small btn-outline" type="button">Buscar</button>
-                                    <button class="btn btn-small btn-success" type="button">PDF</button>
-                                    <button class="btn btn-small btn-warning" type="button">Excel</button>
-                                    <button class="btn btn-small btn-muted" type="button">E-mail</button>
-                                </div>
-                            </div>
-
-                            <div class="emitted-table-wrap">
+                            <?php if ($viewMirror): $snap=$viewMirror['snapshot']; ?>
+                                <div class="message warning" style="text-align:center;font-size:18px"><strong>PRÉVIA DANFE / ESPELHO — SEM VALOR FISCAL — NÃO TRANSMITIDO À SEFAZ</strong></div>
+                                <div class="panel"><h2>ESPELHO DO PEDIDO #<?= (int)$viewMirror['source_order_id'] ?> — versão <?= (int)$viewMirror['snapshot_version'] ?></h2><p class="message warning">Este é um Espelho interno e não possui valor fiscal.</p><p>Criado em <?= htmlspecialchars($viewMirror['created_at']) ?> por usuário #<?= (int)$viewMirror['created_by'] ?></p><p>Total: <?= formatCurrency((float)($snap['grand_total']??0)) ?></p><table><thead><tr><th>Produto</th><th>Quantidade</th><th>Preço</th><th>Total</th></tr></thead><tbody><?php foreach(($snap['items']??[]) as $i): ?><tr><td><?= htmlspecialchars($i['nome']??'') ?></td><td><?= htmlspecialchars((string)$i['quantity']) ?></td><td><?= formatCurrency((float)$i['unit_price']) ?></td><td><?= formatCurrency((float)$i['net_total']) ?></td></tr><?php endforeach; ?></tbody></table><button class="btn secondary" onclick="window.print()">Imprimir Espelho</button></div>
+                            <?php elseif ($viewDocument): renderFiscalPreview($viewDocument); ?>
+                                <div class="panel"><h2>Documento Fiscal Interno v<?= (int)$viewDocument['document_version'] ?></h2><p class="message warning">Documento fiscal interno — ainda não transmitido à SEFAZ.</p><span class="status-badge"><?= htmlspecialchars($viewDocument['status']) ?></span><?php if($viewDocument['status']==='FISCAL_READY'): ?><p>Pronto para futura geração do XML.</p><?php endif; ?><h3>Pendências</h3><ul><?php foreach($viewDocument['pending'] as $p): ?><li><?= htmlspecialchars($p) ?></li><?php endforeach; ?></ul><h3>Emitente snapshot</h3><pre><?= htmlspecialchars(json_encode($viewDocument['issuer_snapshot'],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)) ?></pre><h3>Destinatário snapshot</h3><pre><?= htmlspecialchars(json_encode($viewDocument['recipient_snapshot'],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)) ?></pre><h3>Itens e tributação</h3><?php foreach($viewDocument['items'] as $i): ?><pre><?= htmlspecialchars(json_encode(['produto'=>json_decode($i['product_snapshot_json'],true),'tributacao'=>json_decode($i['tax_resolution_json']?:'null',true)],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)) ?></pre><?php endforeach; ?><h3>Totais / Pagamento / Transporte</h3><pre><?= htmlspecialchars(json_encode(['totais'=>$viewDocument['totals'],'pagamento'=>$viewDocument['payment_snapshot'],'transporte'=>$viewDocument['transport_snapshot']],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)) ?></pre></div>
+                            <?php else: ?><div class="emitted-table-wrap" data-issued-orders data-csrf="<?= htmlspecialchars((string)($_SESSION['erp_fiscal_csrf']??'')) ?>">
+                                <?php if(!empty($issuedLoadMessage)): ?><div class="message error"><?= htmlspecialchars($issuedLoadMessage) ?></div><?php endif; ?>
                                 <table class="emitted-table">
                                     <thead>
                                         <tr>
                                             <th>Pedido</th>
                                             <th>Data</th>
-                                            <th>Tipo</th>
-                                            <th>Pessoa</th>
-                                            <th>Número Nota</th>
-                                            <th>Valor Total</th>
+                                            <th>Cliente / fornecedor</th>
+                                            <th>Total</th><th>Modelo</th><th>Status</th><th>Fiscal</th>
                                             <th>Ações</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <?php foreach ($vendas as $v): ?>
-                                            <tr>
-                                                <td><?= (int) $v['id'] ?></td>
-                                                <td><?= htmlspecialchars(date('d/m/Y', strtotime($v['data_venda']))) ?></td>
-                                                <td><span class="status-badge">Saída</span></td>
-                                                <td><?= htmlspecialchars($v['cliente_nome'] ?? 'Cliente') ?></td>
-                                                <td><?= (int) ($v['id'] + 100) ?></td>
-                                                <td><?= htmlspecialchars(formatCurrency((float) ($v['total'] ?? 0))) ?></td>
-                                                <td class="table-actions">
-                                                    <button type="button" class="icon-action view" title="Visualizar">◉</button>
-                                                    <button type="button" class="icon-action print" title="Imprimir">🖨</button>
-                                                    <button type="button" class="icon-action clone" title="Clonar nota">⧉</button>
-                                                    <button type="button" class="icon-action delete" title="Excluir">✕</button>
+                                        <?php foreach ($fiscalOrders as $v): ?>
+                                            <?php $editTab=$v['operation_type']==='ENTRY'?'entrada':'saida';$locked=!empty($v['reservation_id']); ?>
+                                            <tr class="issued-row" tabindex="0" data-edit-url="?page=pedidos&amp;tab=<?= $editTab ?>&amp;order_id=<?= (int)$v['id'] ?>">
+                                                <td data-label="Pedido"><strong>#<?= (int)$v['id'] ?></strong><small><?= htmlspecialchars((string)($v['internal_code']??'')) ?></small></td>
+                                                <td data-label="Data"><?= htmlspecialchars(date('d/m/Y', strtotime($v['operation_date']))) ?></td>
+                                                <td data-label="Cliente / fornecedor"><?= htmlspecialchars($v['person_name']) ?></td>
+                                                <td data-label="Total"><strong><?= htmlspecialchars(formatCurrency((float)$v['grand_total'])) ?></strong></td>
+                                                <td data-label="Modelo"><?= htmlspecialchars((string)$v['fiscal_model']) ?></td>
+                                                <td data-label="Status"><span class="status-badge"><?= htmlspecialchars((string)$v['fiscal_status']) ?></span></td>
+                                                <td data-label="Fiscal"><?php if($locked): ?><span class="fiscal-lock" title="Numeração fiscal reservada">🔒 Nº <?= htmlspecialchars((string)$v['fiscal_number']) ?></span><?php elseif($v['document_id']): ?>Documento #<?= (int)$v['document_id'] ?><?php else: ?>Não iniciado<?php endif; ?></td>
+                                                <td class="table-actions" data-label="Ações">
+                                                    <a class="issued-action" href="?page=pedidos&amp;tab=<?= $editTab ?>&amp;order_id=<?= (int)$v['id'] ?>" title="Editar pedido" aria-label="Editar pedido">✎ <span>Editar</span></a>
+                                                    <button class="issued-action" type="button" data-issued-action="preview" data-order-id="<?= (int)$v['id'] ?>" title="Gerar <?= $v['fiscal_model']==='65'?'Prévia DANFC-e':'Prévia DANFE' ?>" aria-label="Gerar <?= $v['fiscal_model']==='65'?'Prévia DANFC-e':'Prévia DANFE' ?>">▤ <span><?= $v['fiscal_model']==='65'?'Prévia DANFC-e':'Prévia DANFE' ?></span></button>
+                                                    <button class="issued-action primary" type="button" data-issued-action="issue" data-order-id="<?= (int)$v['id'] ?>" data-idempotency="<?= hash('sha256',session_id().'|issue|'.(int)$v['id'].'|'.bin2hex(random_bytes(8))) ?>" title="Emitir / Transmitir" aria-label="Emitir ou transmitir pedido">➤ <span>Emitir</span></button>
+                                                    <details class="issued-more"><summary title="Mais ações" aria-label="Mais ações">⋮</summary><div><button type="button" data-issued-action="clone" data-order-id="<?= (int)$v['id'] ?>" title="Clonar pedido">⧉ Clonar</button><button type="button" class="danger" data-issued-action="delete" data-order-id="<?= (int)$v['id'] ?>" data-order-label="#<?= (int)$v['id'] ?> — <?= htmlspecialchars($v['person_name']) ?> — <?= htmlspecialchars(date('d/m/Y',strtotime($v['operation_date']))) ?> — <?= htmlspecialchars(formatCurrency((float)$v['grand_total'])) ?>" title="Excluir pedido"<?= $locked?' disabled':'' ?>>🗑 Excluir</button></div></details>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
                                     </tbody>
                                 </table>
+                                <?php $ioQuery=$_GET; ?><footer class="issued-pagination"><span><?= (int)$issuedData['total'] ?> registro(s)</span><nav><?php for($p=max(1,$issuedData['page']-2);$p<=min($issuedData['pages'],$issuedData['page']+2);$p++):$ioQuery['io_page']=$p; ?><a class="<?= $p===$issuedData['page']?'active':'' ?>" href="?<?= htmlspecialchars(http_build_query($ioQuery)) ?>"><?= $p ?></a><?php endfor; ?></nav></footer>
                             </div>
+                            <dialog id="issued-delete-modal" class="app-modal"><div class="app-modal__surface"><header class="app-modal__header"><h2>Excluir pedido?</h2><button type="button" data-app-modal-close aria-label="Fechar">×</button></header><div class="app-modal__body"><p>Esta ação excluirá somente um pedido sem vínculo fiscal.</p><strong data-issued-delete-label></strong></div><footer class="app-modal__footer"><button class="btn secondary" type="button" data-app-modal-close>Cancelar</button><button class="btn danger" type="button" data-confirm-issued-delete>Excluir pedido</button></footer></div></dialog>
+                            <!-- Contrato legado preservado: data-danfe-preview / Prévia DANFE. A lista usa o fluxo POST seguro acima. -->
+                            <script src="/assets/issued-orders.js"></script><?php endif; ?>
                         <?php else: ?>
                             <form method="POST" id="pedido-form" class="pedido-form">
-                                <input type="hidden" name="action" value="save_venda">
                                 <input type="hidden" name="tipo" value="<?= $tab ?>">
+                                <input type="hidden" name="order_id" value="<?= (int)($editingOrder['id'] ?? 0) ?>">
+                                <input type="hidden" name="establishment_id" value="<?= (int)($erpEstablishment['id'] ?? 0) ?>">
+                                <input type="hidden" name="idempotency_key" value="<?= hash('sha256', session_id() . '|' . bin2hex(random_bytes(16))) ?>">
 
                                 <div class="pedido-section">
+                                    <div class="section-grid fields-row">
+                                        <div class="field-wrap"><label>Natureza da Operação</label><input type="text" name="operation_nature" value="<?= htmlspecialchars($editingOrder['operation_nature'] ?? 'Venda de mercadoria') ?>"></div>
+                                        <div class="field-wrap"><label>Modelo do documento fiscal</label><select name="fiscal_model" id="fiscal-model-select"><option value="55"<?= $previewSelectedModel==='55'?' selected':'' ?>>55 — NF-e</option><option value="65"<?= $previewSelectedModel==='65'?' selected':'' ?>>65 — NFC-e</option></select><small>55 — NF-e / DANFE A4 · 65 — NFC-e / DANFC-e cupom</small></div>
+                                        <div class="field-wrap"><label>Finalidade</label><select name="purpose"><option value="NORMAL">Normal</option><option value="RETURN">Devolução</option></select></div>
+                                        <div class="field-wrap"><label>Presença</label><select name="presence_indicator"><option value="1">1 — Presencial</option><option value="2">2 — Internet</option><option value="9">9 — Outros</option></select></div>
+                                        <label class="checkbox-inline"><input type="checkbox" name="final_consumer" value="1"> Consumidor final</label>
+                                    </div>
                                     <div class="section-grid fields-row">
                                         <div class="field-wrap">
                                             <label>Código Interno</label>
@@ -971,14 +1091,14 @@ if (is_dir($imagesDir)) {
                                         </div>
                                         <div class="field-wrap">
                                             <label>Data</label>
-                                            <input type="date" name="data_venda" value="<?= date('Y-m-d') ?>">
+                                            <input type="date" name="data_venda" value="<?= htmlspecialchars($editingOrder['operation_date'] ?? date('Y-m-d')) ?>">
                                         </div>
                                         <div class="field-wrap">
                                             <label>Cliente / Pessoa</label>
-                                            <select name="cliente_id" required>
+                                            <select name="cliente_id" <?= $tab === 'saida' ? 'required' : '' ?>>
                                                 <option value="">Selecione um Cliente</option>
                                                 <?php foreach ($clientes as $c): ?>
-                                                    <option value="<?= (int)$c['id'] ?>"><?= htmlspecialchars($c['nome']) ?></option>
+                                                    <option value="<?= (int)$c['id'] ?>" <?= (int)($editingOrder['person_id'] ?? 0) === (int)$c['id'] ? 'selected' : '' ?>><?= htmlspecialchars($c['nome']) ?></option>
                                                 <?php endforeach; ?>
                                             </select>
                                         </div>
@@ -996,7 +1116,7 @@ if (is_dir($imagesDir)) {
                                     <div class="section-grid fields-row">
                                         <div class="field-wrap">
                                             <label>Fornecedor</label>
-                                            <select name="fornecedor_id">
+                                            <select name="fornecedor_id" <?= $tab === 'entrada' ? 'required' : '' ?>>
                                                 <option value="">Selecione um fornecedor</option>
                                                 <?php foreach ($fornecedores as $f): ?>
                                                     <option value="<?= (int)$f['id'] ?>"><?= htmlspecialchars($f['nome']) ?></option>
@@ -1008,7 +1128,7 @@ if (is_dir($imagesDir)) {
                                             <select name="transportadora_id">
                                                 <option value="">Selecione uma transportadora</option>
                                                 <?php foreach ($transportadoras as $t): ?>
-                                                    <option value="<?= (int)$t['id'] ?>"><?= htmlspecialchars($t['nome']) ?></option>
+                                                <option value="<?= (int)$t['id'] ?>" <?= (int)($editingOrder['carrier_id'] ?? 0) === (int)$t['id'] ? 'selected' : '' ?>><?= htmlspecialchars($t['nome']) ?></option>
                                                 <?php endforeach; ?>
                                             </select>
                                         </div>
@@ -1017,7 +1137,7 @@ if (is_dir($imagesDir)) {
                                             <select name="motorista_id">
                                                 <option value="">Selecione um motorista</option>
                                                 <?php foreach ($motoristas as $m): ?>
-                                                    <option value="<?= (int)$m['id'] ?>"><?= htmlspecialchars($m['nome']) ?></option>
+                                                <option value="<?= (int)$m['id'] ?>" <?= (int)($editingOrder['driver_id'] ?? 0) === (int)$m['id'] ? 'selected' : '' ?>><?= htmlspecialchars($m['nome']) ?></option>
                                                 <?php endforeach; ?>
                                             </select>
                                         </div>
@@ -1054,10 +1174,10 @@ if (is_dir($imagesDir)) {
                                     </div>
                                     <table id="items-table">
                                         <thead>
-                                            <tr><th>Item</th><th>Cod.Prod.</th><th>Descrição</th><th>UN</th><th>Qtd.</th><th>Vlr Uni.</th><th>Vlr Total</th><th>Ações</th></tr>
+                                            <tr><th>Item</th><th>Cod.Prod.</th><th>Descrição</th><th>UN</th><th>Qtd.</th><th>Vlr Uni.</th><th>Desconto</th><th>Vlr Total</th><th>Status fiscal</th><th>Ações</th></tr>
                                         </thead>
                                         <tbody>
-                                            <tr class="no-items"><td colspan="8">Nenhum registro encontrado</td></tr>
+                                            <tr class="no-items"><td colspan="10">Nenhum registro encontrado</td></tr>
                                         </tbody>
                                     </table>
                                 </div>
@@ -1121,15 +1241,26 @@ if (is_dir($imagesDir)) {
                                 </div>
 
                                 <div class="form-actions form-actions-footer">
-                                    <button class="btn secondary" type="button">Salvar Rascunho</button>
-                                    <button class="btn primary" type="submit">Salvar Pedido</button>
+                                    <button class="btn primary" type="submit" name="action" value="save_fiscal_order">Salvar Pedido</button>
+                                    <button class="btn secondary" type="submit" data-fiscal-action="preview" id="fiscal-preview-submit"><?= $previewSelectedModel==='65'?'Prévia DANFC-e':'Prévia DANFE' ?></button>
+                                    <button class="btn secondary" type="submit" name="action" value="save_internal_fiscal_document" data-fiscal-action="note">Gravar Nota</button>
+                                    <button class="btn secondary" type="submit" name="action" value="save_fiscal_mirror" data-fiscal-action="mirror" title="Prévia administrativa: não reserva número e não gera DANFE">Salvar prévia interna</button>
+                                    <button class="btn secondary" type="button">Financeiro</button>
+                                    <button class="btn secondary" type="button" onclick="window.print()">Imprimir Pedido</button>
+                                    <button class="btn secondary" type="button" disabled title="Task futura">Importar de Outra Empresa</button>
+                                    <a class="btn secondary" href="?page=pedidos&tab=<?= urlencode($tab) ?>">Nova</a>
                                 </div>
 
                             </form>
 
                             <script>
-                                window.PRODUCTS = <?= json_encode(array_map(function($p){ return ['id'=>(int)$p['id'],'nome'=>$p['nome'],'codigo'=>$p['codigo'],'preco'=>(float)$p['preco'],'un'=>'un']; }, $produtos)) ?>;
+                            (()=>{const form=document.querySelector('#pedido-form');if(!form)return;const buttons=[...form.querySelectorAll('[data-fiscal-action]')];let clicked=null;buttons.forEach(b=>b.addEventListener('click',()=>clicked=b));form.addEventListener('submit',async e=>{if(!clicked)return;e.preventDefault();const pdfWindow=window.open('','_blank');if(pdfWindow)pdfWindow.document.write('<!doctype html><title>Processando</title><p style="font:16px sans-serif;padding:30px">Processando documento fiscal...</p>');buttons.forEach(b=>b.disabled=true);const old=clicked.textContent;clicked.textContent='Processando...';const data=new FormData(form);data.set('fiscal_action',clicked.dataset.fiscalAction);try{const response=await fetch('/fiscal_action.php',{method:'POST',body:data,credentials:'same-origin',headers:{Accept:'application/json'}});const result=await response.json();if(result.success){if(pdfWindow&&result.danfe_url)pdfWindow.location=result.danfe_url;else if(pdfWindow)pdfWindow.close();location.href=result.notes_url||'/?page=pedidos&tab=emitidos';return;}if(pdfWindow)pdfWindow.close();alert((result.error_code?result.error_code+': ':'')+(result.error_message||'Falha no processamento fiscal.'));if(result.notes_url)location.href=result.notes_url;}catch(error){if(pdfWindow)pdfWindow.close();alert('Não foi possível processar o documento. Os dados do formulário foram preservados.');buttons.forEach(b=>b.disabled=false);clicked.textContent=old;}finally{clicked=null;}});})();
+                            </script>
+
+                            <script>
+                                window.PRODUCTS = <?= json_encode(array_map(function($p){ return ['product_id'=>(int)$p['id'],'id'=>(int)$p['id'],'nome'=>$p['nome'],'codigo'=>$p['codigo'],'preco'=>(float)$p['preco'],'un'=>$p['unidade'] ?? 'UN','estoque'=>(float)($p['estoque_atual'] ?? 0),'status'=>$p['status'] ?? 'ativo']; }, $produtos)) ?>;
                                 window.CLIENTS = <?= json_encode($clientes) ?>;
+                                window.ORDER_ITEMS = <?= json_encode($editingOrder['items'] ?? []) ?>;
                                 // carregar impostos por produto do banco
                                 window.PRODUCT_TAXES = {};
                                 <?php
@@ -1198,6 +1329,7 @@ if (is_dir($imagesDir)) {
 
                                 <form method="POST" class="register-form">
                                     <input type="hidden" name="action" value="save_cliente">
+                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['erp_client_csrf'], ENT_QUOTES, 'UTF-8') ?>">
                                     <?php if ($editPessoa): ?>
                                         <input type="hidden" name="id" value="<?= (int) $editPessoa['id'] ?>">
                                     <?php endif; ?>
@@ -1236,6 +1368,7 @@ if (is_dir($imagesDir)) {
                                                         <label class="checkbox-inline"><input type="checkbox" name="tipo_pessoa[]" value="cliente" <?= in_array('cliente', $tiposPessoa, true) ? 'checked' : '' ?>> Cliente</label>
                                                         <label class="checkbox-inline"><input type="checkbox" name="tipo_pessoa[]" value="fornecedor" <?= in_array('fornecedor', $tiposPessoa, true) ? 'checked' : '' ?>> Fornecedor</label>
                                                         <label class="checkbox-inline"><input type="checkbox" name="tipo_pessoa[]" value="vendedor" <?= in_array('vendedor', $tiposPessoa, true) ? 'checked' : '' ?>> Vendedor</label>
+                                                        <label class="checkbox-inline"><input type="checkbox" name="tipo_pessoa[]" value="transportadora" <?= in_array('transportadora', $tiposPessoa, true) ? 'checked' : '' ?>> Transportadora</label>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1252,6 +1385,8 @@ if (is_dir($imagesDir)) {
                                                     <label>Aniversário:</label>
                                                     <input type="date" name="aniversario" value="<?= htmlspecialchars($editPessoa['aniversario'] ?? '') ?>">
                                                 </div>
+                                                <div class="field-block"><label>Tipo fiscal:</label><select name="person_type"><option value="PF" <?= (($editPessoa['person_type'] ?? 'PF') === 'PF') ? 'selected' : '' ?>>Pessoa Física</option><option value="PJ" <?= (($editPessoa['person_type'] ?? '') === 'PJ') ? 'selected' : '' ?>>Pessoa Jurídica</option><option value="FOREIGN" <?= (($editPessoa['person_type'] ?? '') === 'FOREIGN') ? 'selected' : '' ?>>Estrangeiro</option></select></div>
+                                                <div class="field-block"><label>RG:</label><input type="text" name="rg" value="<?= htmlspecialchars($editPessoa['rg'] ?? '') ?>"></div>
                                                 <div class="field-block">
                                                     <label>Gênero:</label>
                                                     <select name="genero">
@@ -1314,7 +1449,7 @@ if (is_dir($imagesDir)) {
                                                 </div>
                                                 <div class="field-block">
                                                     <label>Cidade <span class="required">*</span></label>
-                                                    <input type="text" id="cliente_cidade" name="cidade" value="<?= htmlspecialchars($editPessoa['cidade'] ?? '') ?>">
+                                                    <input type="text" id="cliente_cidade" name="municipio" value="<?= htmlspecialchars($editPessoa['municipio'] ?? $editPessoa['cidade'] ?? '') ?>">
                                                 </div>
                                             </div>
 
@@ -1345,6 +1480,13 @@ if (is_dir($imagesDir)) {
                                         </div>
 
                                         <div class="register-panel" data-register-panel="fiscal">
+                                            <div class="register-grid four-columns-form">
+                                                <div class="field-block"><label>Indicador de IE:</label><select name="state_registration_indicator"><option value="1" <?= (($editPessoa['state_registration_indicator'] ?? '9') === '1') ? 'selected' : '' ?>>1 — Contribuinte ICMS</option><option value="2" <?= (($editPessoa['state_registration_indicator'] ?? '') === '2') ? 'selected' : '' ?>>2 — Contribuinte isento</option><option value="9" <?= (($editPessoa['state_registration_indicator'] ?? '9') === '9') ? 'selected' : '' ?>>9 — Não contribuinte</option></select></div>
+                                                <div class="field-block"><label>Inscrição Estadual:</label><input type="text" name="inscricao_estadual" value="<?= htmlspecialchars($editPessoa['inscricao_estadual'] ?? '') ?>"></div>
+                                                <div class="field-block"><label>Identificação estrangeira:</label><input type="text" name="foreign_id" value="<?= htmlspecialchars($editPessoa['foreign_id'] ?? '') ?>"></div>
+                                                <div class="field-block"><label>País:</label><input type="text" name="country_name" value="<?= htmlspecialchars($editPessoa['country_name'] ?? 'BRASIL') ?>"></div>
+                                                <div class="field-block"><label>Código do país:</label><input type="text" name="country_code" value="<?= htmlspecialchars($editPessoa['country_code'] ?? '1058') ?>"></div>
+                                            </div>
                                             <div class="register-grid four-columns-form">
                                                 <div class="field-block">
                                                     <label>Suprama:</label>
@@ -1471,6 +1613,7 @@ if (is_dir($imagesDir)) {
                                     </div>
 
                                     <div class="register-action-row">
+                                        <label style="width:100%">Observações:<textarea name="observations" rows="3" style="width:100%"><?= htmlspecialchars($editPessoa['observations'] ?? '') ?></textarea></label>
                                         <button class="btn primary" type="submit">Salvar</button>
                                         <a class="btn secondary" href="?page=cadastro&tab=pessoas">Voltar</a>
                                         <a class="btn secondary" href="?page=cadastro&tab=pessoas">Adicionar Nova Pessoa</a>
@@ -1496,13 +1639,14 @@ if (is_dir($imagesDir)) {
                                                 </select>
                                             </label>
                                         </div>
-                                        <div class="inline-actions-right">
-                                            <button class="btn btn-small btn-outline" type="button">Pesquisar</button>
-                                            <button class="btn btn-small btn-outline" type="button">Buscar registros</button>
+                                        <form method="GET" class="inline-actions-right">
+                                            <input type="hidden" name="page" value="cadastro"><input type="hidden" name="tab" value="pessoas">
+                                            <input type="search" name="q" value="<?= htmlspecialchars((string) ($_GET['q'] ?? ''), ENT_QUOTES, 'UTF-8') ?>" placeholder="Nome, documento ou e-mail">
+                                            <button class="btn btn-small btn-outline" type="submit">Pesquisar</button>
                                             <button class="btn btn-small btn-success" type="button">PDF</button>
                                             <button class="btn btn-small btn-warning" type="button">Excel</button>
                                             <button class="btn btn-small btn-muted" type="button">E-mail</button>
-                                        </div>
+                                        </form>
                                     </div>
 
                                     <table class="register-table">
@@ -1526,6 +1670,7 @@ if (is_dir($imagesDir)) {
                                                         <a class="icon-action view" href="?page=cadastro&tab=pessoas&edit=<?= (int)$c['id'] ?>" title="Editar">✎</a>
                                                         <form method="POST" class="inline-form" onsubmit="return confirm('Deseja remover esta pessoa?');">
                                                             <input type="hidden" name="action" value="delete_cliente">
+                                                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['erp_client_csrf'], ENT_QUOTES, 'UTF-8') ?>">
                                                             <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
                                                             <button class="icon-action delete" type="submit" title="Excluir">✕</button>
                                                         </form>
@@ -1584,6 +1729,22 @@ if (is_dir($imagesDir)) {
                                                 </div>
 
                                                 <div class="inline-row">
+                                                    <label>Origem da mercadoria
+                                                        <select name="merchandise_origin">
+                                                            <option value="">Selecione</option>
+                                                            <?php foreach (['0'=>'0 - Nacional','1'=>'1 - Estrangeira, importação direta','2'=>'2 - Estrangeira, mercado interno','3'=>'3 - Nacional, conteúdo importado > 40%','4'=>'4 - Nacional, processo básico','5'=>'5 - Nacional, conteúdo importado ≤ 40%','6'=>'6 - Estrangeira sem similar','7'=>'7 - Estrangeira mercado interno sem similar','8'=>'8 - Nacional, conteúdo importado > 70%'] as $code=>$label): ?>
+                                                                <option value="<?= $code ?>" <?= (($editProduto['merchandise_origin'] ?? '') === $code) ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option>
+                                                            <?php endforeach; ?>
+                                                        </select>
+                                                    </label>
+                                                    <label>EX TIPI<input type="text" name="extipi" value="<?= htmlspecialchars($editProduto['extipi'] ?? '') ?>"></label>
+                                                </div>
+                                                <div class="inline-row">
+                                                    <label>Código de benefício fiscal (cBenef)<input type="text" name="tax_benefit_code" value="<?= htmlspecialchars($editProduto['tax_benefit_code'] ?? '') ?>"></label>
+                                                    <label>Número FCI<input type="text" name="fci_number" value="<?= htmlspecialchars($editProduto['fci_number'] ?? '') ?>"></label>
+                                                </div>
+
+                                                <div class="inline-row">
                                                     <label>
                                                         Unidade
                                                         <input type="text" name="unidade" value="<?= htmlspecialchars($editProduto['unidade'] ?? 'UN') ?>">
@@ -1592,6 +1753,12 @@ if (is_dir($imagesDir)) {
                                                         GTIN / Código de barras
                                                         <input type="text" name="gtin" value="<?= htmlspecialchars($editProduto['gtin'] ?? '') ?>">
                                                     </label>
+                                                </div>
+
+                                                <div class="inline-row">
+                                                    <label>Unidade tributável<input type="text" name="taxable_unit" value="<?= htmlspecialchars($editProduto['taxable_unit'] ?? ($editProduto['unidade'] ?? 'UN')) ?>"></label>
+                                                    <label>GTIN tributável<input type="text" name="gtin_tributable" value="<?= htmlspecialchars($editProduto['gtin_tributable'] ?? ($editProduto['gtin'] ?? 'SEM GTIN')) ?>"></label>
+                                                    <label>Fator comercial → tributável<input type="number" step="0.000001" min="0.000001" name="conversion_factor" value="<?= htmlspecialchars((string)($editProduto['conversion_factor'] ?? 1)) ?>"></label>
                                                 </div>
 
                                                 <div class="inline-row">
@@ -1607,6 +1774,10 @@ if (is_dir($imagesDir)) {
 
                                                 <div class="inline-row">
                                                     <label>
+                                                        Preço de custo
+                                                        <input type="number" step="0.0001" min="0" name="cost_price" value="<?= htmlspecialchars((string) ($editProduto['cost_price'] ?? 0)) ?>">
+                                                    </label>
+                                                    <label>
                                                         Preço de venda
                                                         <input type="number" step="0.01" min="0" name="preco" value="<?= htmlspecialchars((string) ($editProduto['preco'] ?? 0)) ?>" required>
                                                     </label>
@@ -1614,6 +1785,7 @@ if (is_dir($imagesDir)) {
                                                         Estoque atual
                                                         <input type="number" min="0" name="estoque_atual" value="<?= htmlspecialchars((string) ($editProduto['estoque_atual'] ?? 0)) ?>" required>
                                                     </label>
+                                                    <label>Estoque mínimo<input type="number" step="0.0001" min="0" name="minimum_stock" value="<?= htmlspecialchars((string)($editProduto['minimum_stock'] ?? 0)) ?>"></label>
                                                 </div>
 
                                                 <label>
@@ -1821,20 +1993,20 @@ if (is_dir($imagesDir)) {
                                     <form method="POST" class="form-grid">
                                         <input type="hidden" name="action" value="save_transportadora">
                                         <?php if ($editTransportadora): ?><input type="hidden" name="id" value="<?= (int) $editTransportadora['id'] ?>"><?php endif; ?>
-                                        <label>Nome<input type="text" name="nome" value="<?= htmlspecialchars($editTransportadora['nome'] ?? '') ?>" required></label>
-                                        <label>Nome fantasia<input type="text" name="nome_fantasia" value="<?= htmlspecialchars($editTransportadora['nome_fantasia'] ?? '') ?>"></label>
-                                        <label>CPF/CNPJ<input type="text" name="cpf_cnpj" value="<?= htmlspecialchars($editTransportadora['cpf_cnpj'] ?? '') ?>" required></label>
+                                        <label>Nome<input type="text" id="transportadora_nome" name="nome" value="<?= htmlspecialchars($editTransportadora['nome'] ?? '') ?>" required></label>
+                                        <label>Nome fantasia<input type="text" id="transportadora_nome_fantasia" name="nome_fantasia" value="<?= htmlspecialchars($editTransportadora['nome_fantasia'] ?? '') ?>"></label>
+                                        <label>CPF/CNPJ<div style="display:flex;gap:8px;align-items:center"><input type="text" id="transportadora_cpf_cnpj" name="cpf_cnpj" value="<?= htmlspecialchars($editTransportadora['cpf_cnpj'] ?? '') ?>" required><button type="button" id="btn-buscar-cnpj-transportadora" class="btn small">Buscar CNPJ</button></div></label>
                                         <label>Inscrição Estadual<input type="text" name="inscricao_estadual" value="<?= htmlspecialchars($editTransportadora['inscricao_estadual'] ?? '') ?>"></label>
                                         <label>E-mail<input type="email" name="email" value="<?= htmlspecialchars($editTransportadora['email'] ?? '') ?>"></label>
-                                        <label>Telefone<input type="text" name="telefone" value="<?= htmlspecialchars($editTransportadora['telefone'] ?? '') ?>"></label>
-                                        <label>CEP<input type="text" name="cep" value="<?= htmlspecialchars($editTransportadora['cep'] ?? '') ?>"></label>
-                                        <label>Logradouro<input type="text" name="logradouro" value="<?= htmlspecialchars($editTransportadora['logradouro'] ?? '') ?>"></label>
-                                        <label>Número<input type="text" name="numero" value="<?= htmlspecialchars($editTransportadora['numero'] ?? '') ?>"></label>
-                                        <label>Complemento<input type="text" name="complemento" value="<?= htmlspecialchars($editTransportadora['complemento'] ?? '') ?>"></label>
-                                        <label>Bairro<input type="text" name="bairro" value="<?= htmlspecialchars($editTransportadora['bairro'] ?? '') ?>"></label>
-                                        <label>Município<input type="text" name="municipio" value="<?= htmlspecialchars($editTransportadora['municipio'] ?? '') ?>"></label>
-                                        <label>UF<input type="text" name="uf" value="<?= htmlspecialchars($editTransportadora['uf'] ?? '') ?>"></label>
-                                        <label>Cidade<input type="text" name="cidade" value="<?= htmlspecialchars($editTransportadora['cidade'] ?? '') ?>"></label>
+                                        <label>Telefone<input type="text" id="transportadora_telefone" name="telefone" value="<?= htmlspecialchars($editTransportadora['telefone'] ?? '') ?>"></label>
+                                        <label>CEP<input type="text" id="transportadora_cep" name="cep" value="<?= htmlspecialchars($editTransportadora['cep'] ?? '') ?>"></label>
+                                        <label>Logradouro<input type="text" id="transportadora_logradouro" name="logradouro" value="<?= htmlspecialchars($editTransportadora['logradouro'] ?? '') ?>"></label>
+                                        <label>Número<input type="text" id="transportadora_numero" name="numero" value="<?= htmlspecialchars($editTransportadora['numero'] ?? '') ?>"></label>
+                                        <label>Complemento<input type="text" id="transportadora_complemento" name="complemento" value="<?= htmlspecialchars($editTransportadora['complemento'] ?? '') ?>"></label>
+                                        <label>Bairro<input type="text" id="transportadora_bairro" name="bairro" value="<?= htmlspecialchars($editTransportadora['bairro'] ?? '') ?>"></label>
+                                        <label>Município<input type="text" id="transportadora_municipio" name="municipio" value="<?= htmlspecialchars($editTransportadora['municipio'] ?? '') ?>"></label>
+                                        <label>UF<input type="text" id="transportadora_uf" name="uf" value="<?= htmlspecialchars($editTransportadora['uf'] ?? '') ?>"></label>
+                                        <label>Cidade<input type="text" id="transportadora_cidade" name="cidade" value="<?= htmlspecialchars($editTransportadora['cidade'] ?? '') ?>"></label>
                                         <label>Status<select name="status"><option value="ativo" <?= (($editTransportadora['status'] ?? 'ativo') === 'ativo') ? 'selected' : '' ?>>Ativo</option><option value="inativo" <?= (($editTransportadora['status'] ?? 'ativo') === 'inativo') ? 'selected' : '' ?>>Inativo</option></select></label>
                                         <div class="form-actions"><button class="btn primary" type="submit">Salvar</button><?php if ($editTransportadora): ?><a class="btn secondary" href="?page=cadastro&tab=transportadoras">Cancelar</a><?php endif; ?></div>
                                     </form>
@@ -1874,7 +2046,14 @@ if (is_dir($imagesDir)) {
                         <a class="btn primary" href="?page=configuracao">Cadastrar Empresa</a>
                     </section>
 
+                    <?php if ($tab === 'fiscal'): ?>
+                        <div class="panel"><h3>Central de Configuração Fiscal</h3><p>CFOP, CSC, ICMS, PIS/COFINS, IPI, IBS/CBS e Imposto Seletivo usam a mesma fonte no banco deste tenant.</p><a class="btn primary" href="/plataforma/empresa-fiscal-central.php?id=<?= (int)($_SESSION['erp_tenant_id'] ?? $_SESSION['tenant_id'] ?? 0) ?>">Abrir Central Fiscal NF-e / NFC-e</a></div>
+                    <?php endif; ?>
+
                     <?php if ($tab === 'empresa'): ?>
+                    <?php if ($secureErpRuntime !== null): $erpReadiness = (new \MiniErp\Services\FiscalReadiness())->evaluate($erpEstablishment); ?>
+                    <div class="panel"><h3>Empresa / Estabelecimento fiscal</h3><p>Fonte canônica deste tenant · Fiscal Readiness: <strong><?= htmlspecialchars($erpReadiness['status']) ?></strong> (<?= $erpReadiness['complete_count'] ?>/<?= $erpReadiness['total_count'] ?>).</p><?php if (isset($_GET['fiscal_saved'])): ?><p class="message success">Cadastro fiscal salvo.</p><?php endif; ?><?php if (!$erpEstablishmentSchemaAvailable): ?><p class="message error">Migration FISCAL-01 ainda não aplicada neste banco. Faça backup e aplique-a manualmente.</p><?php else: ?><?php renderEstablishmentForm($erpEstablishment ?? [], (string) $_SESSION['erp_establishment_csrf']); ?><?php endif; ?></div>
+                    <?php endif; ?>
                     <?php
                         // carregar lista de empresas do banco (fallback para antigo JSON se vazio)
                         $empresas = $repo->listCompanies();
@@ -1899,6 +2078,10 @@ if (is_dir($imagesDir)) {
                                 }
                             }
                         }
+                        if ($failedFormAction === 'save_empresa') {
+                            $editCompany = $failedFormData;
+                            $isNew = empty($failedFormData['id']);
+                        }
                     ?>
 
                     <div class="panel">
@@ -1909,7 +2092,7 @@ if (is_dir($imagesDir)) {
                             </div>
                         </div>
 
-                        <?php if (!empty($_GET['new_company']) || $editCompany): ?>
+                        <?php if (!empty($_GET['new_company']) || $editCompany || $failedFormAction === 'save_empresa'): ?>
                             <form method="POST" class="form-grid">
                                 <input type="hidden" name="action" value="save_empresa">
                                 <?php if ($editCompany): ?><input type="hidden" name="id" value="<?= (int)$editCompany['id'] ?>"><?php endif; ?>
@@ -1926,62 +2109,76 @@ if (is_dir($imagesDir)) {
                                 <label>Bairro <input type="text" id="company_bairro" name="bairro" value="<?= htmlspecialchars($editCompany['bairro'] ?? '') ?>"></label>
                                 <label>Telefone <input type="text" id="company_telefone" name="telefone" value="<?= htmlspecialchars($editCompany['telefone'] ?? '') ?>"></label>
                                 <label>Cód. IBGE <input type="text" id="company_codigo_ibge" name="codigo_ibge" value="<?= htmlspecialchars($editCompany['codigo_ibge'] ?? '') ?>"></label>
+                                <div id="company-cnpj-feedback" class="message" style="display:none" role="status" aria-live="polite"></div>
                                 <div class="form-actions"><button class="btn primary" type="submit">Salvar Empresa</button> <a class="btn secondary" href="?page=configuracao&tab=empresa">Cancelar</a></div>
                             </form>
                                 <script>
                                     (function(){
-                                        const btn = document.getElementById('btn-buscar-cnpj');
+                                        const btn = document.getElementById('btn-buscar-cnpj-legacy-disabled');
+                                        const feedback = document.getElementById('company-cnpj-feedback');
                                         if (!btn) return;
+                                        const setConsultedValue = function(fieldId, consultedValue) {
+                                            const field = document.getElementById(fieldId);
+                                            const value = String(consultedValue || '').trim();
+                                            if (!field || !value) return;
+
+                                            const oldAction = field.parentElement.querySelector('.cnpj-use-consulted');
+                                            if (oldAction) oldAction.remove();
+                                            if (!field.value.trim()) {
+                                                field.value = value;
+                                                return;
+                                            }
+                                            if (field.value.trim().toLocaleLowerCase('pt-BR') === value.toLocaleLowerCase('pt-BR')) return;
+
+                                            const action = document.createElement('button');
+                                            action.type = 'button';
+                                            action.className = 'link-button cnpj-use-consulted';
+                                            action.textContent = 'Usar dado consultado: ' + value;
+                                            action.style.marginTop = '4px';
+                                            action.addEventListener('click', function() {
+                                                field.value = value;
+                                                action.remove();
+                                            });
+                                            field.parentElement.appendChild(action);
+                                        };
                                         btn.addEventListener('click', async function(){
                                             const cnpj = document.getElementById('company_cnpj').value || '';
                                             if (!cnpj) return alert('Informe o CNPJ antes de buscar.');
                                             btn.disabled = true;
                                             btn.textContent = 'Buscando...';
+                                            feedback.style.display = 'none';
                                             try {
                                                 const res = await fetch('/ajax_cnpj.php?cnpj=' + encodeURIComponent(cnpj));
                                                 if (!res.ok) {
                                                     const err = await res.json().catch(()=>({}));
-                                                    alert('CNPJ não encontrado ou erro: ' + (err.error||res.status));
+                                                    const messages = {
+                                                        invalid_cnpj: 'O CNPJ informado é inválido.',
+                                                        not_found: 'CNPJ não encontrado.',
+                                                        provider_unavailable: 'A consulta está indisponível no momento.'
+                                                    };
+                                                    alert(messages[err.error] || ('Erro ao consultar CNPJ (' + res.status + ').'));
                                                     return;
                                                 }
                                                 const payload = await res.json();
                                                 const data = payload.data || {};
-                                                // Preencher campos se existirem
-                                                if (data.razao_social) document.getElementById('company_razao').value = data.razao_social;
-                                                if (data.nome_fantasia) document.getElementById('company_apelido').value = data.nome_fantasia;
-                                                if (data.municipio) document.getElementById('company_municipio').value = data.municipio;
-                                                if (data.regime) document.getElementById('company_regime').value = Array.isArray(data.regime) ? (data.regime[0].forma_de_tributacao||'') : (data.regime||'');
-                                                if (data.cep) {
-                                                    const cepField = document.querySelector('input[name="cep"]');
-                                                    if (cepField) cepField.value = data.cep;
-                                                }
-                                                if (data.uf) {
-                                                    const ufField = document.querySelector('input[name="uf"]');
-                                                    if (ufField) ufField.value = data.uf;
-                                                }
+                                                const regime = Array.isArray(data.regime) ? ((data.regime[0] || {}).forma_de_tributacao || '') : (data.regime || '');
                                                 const log = (data.descricao_tipo_de_logradouro||'') + ' ' + (data.logradouro||'');
-                                                if (log.trim()) {
-                                                    const logField = document.querySelector('input[name="logradouro"]');
-                                                    if (logField) logField.value = log.trim();
-                                                }
-                                                if (data.numero) {
-                                                    const numField = document.querySelector('input[name="numero"]');
-                                                    if (numField) numField.value = data.numero;
-                                                }
-                                                if (data.complemento) {
-                                                    const cmpField = document.querySelector('input[name="complemento"]');
-                                                    if (cmpField) cmpField.value = data.complemento;
-                                                }
-                                                if (data.bairro) {
-                                                    const bField = document.querySelector('input[name="bairro"]');
-                                                    if (bField) bField.value = data.bairro;
-                                                }
-                                                if (data.ddd_telefone_1) {
-                                                    const tField = document.querySelector('input[name="telefone"]');
-                                                    if (tField) tField.value = data.ddd_telefone_1;
-                                                }
+                                                setConsultedValue('company_razao', data.razao_social);
+                                                setConsultedValue('company_apelido', data.nome_fantasia);
+                                                setConsultedValue('company_municipio', data.municipio);
+                                                setConsultedValue('company_regime', regime);
+                                                setConsultedValue('company_cep', data.cep);
+                                                setConsultedValue('company_uf', data.uf);
+                                                setConsultedValue('company_logradouro', log);
+                                                setConsultedValue('company_numero', data.numero);
+                                                setConsultedValue('company_complemento', data.complemento);
+                                                setConsultedValue('company_bairro', data.bairro);
+                                                setConsultedValue('company_telefone', data.ddd_telefone_1);
+                                                setConsultedValue('company_codigo_ibge', data.codigo_ibge || data.codigo_municipal);
+                                                feedback.textContent = 'Dados consultados automaticamente. Revise antes de salvar.';
+                                                feedback.style.display = 'block';
                                             } catch (e) {
-                                                alert('Erro ao consultar BrasilAPI: ' + e.message);
+                                                alert('Não foi possível consultar o CNPJ. Verifique sua conexão e tente novamente.');
                                             } finally {
                                                 btn.disabled = false;
                                                 btn.textContent = 'Buscar CNPJ';
@@ -2198,12 +2395,12 @@ if (is_dir($imagesDir)) {
 
                                 <label>
                                     Nome
-                                    <input type="text" name="nome" value="<?= htmlspecialchars($editCliente['nome'] ?? '') ?>" required>
+                                    <input type="text" id="cliente_nome" name="nome" value="<?= htmlspecialchars($editCliente['nome'] ?? '') ?>" required>
                                 </label>
 
                                 <label>
                                     CPF / CNPJ
-                                    <input type="text" name="cpf_cnpj" value="<?= htmlspecialchars($editCliente['cpf_cnpj'] ?? '') ?>" required>
+                                    <span style="display:flex;gap:8px;align-items:center"><input type="text" id="cliente_cpf_cnpj" name="cpf_cnpj" value="<?= htmlspecialchars($editCliente['cpf_cnpj'] ?? '') ?>" required><button type="button" id="btn-buscar-cnpj-cliente" class="btn small">Buscar CNPJ</button></span>
                                 </label>
 
                                 <label>
@@ -2218,47 +2415,47 @@ if (is_dir($imagesDir)) {
 
                                 <label>
                                     Telefone
-                                    <input type="text" name="telefone" value="<?= htmlspecialchars($editCliente['telefone'] ?? '') ?>">
+                                    <input type="text" id="cliente_telefone" name="telefone" value="<?= htmlspecialchars($editCliente['telefone'] ?? '') ?>">
                                 </label>
 
                                 <label>
                                     CEP
-                                    <input type="text" name="cep" value="<?= htmlspecialchars($editCliente['cep'] ?? '') ?>">
+                                    <input type="text" id="cliente_cep" name="cep" value="<?= htmlspecialchars($editCliente['cep'] ?? '') ?>">
                                 </label>
 
                                 <label>
                                     Logradouro
-                                    <input type="text" name="logradouro" value="<?= htmlspecialchars($editCliente['logradouro'] ?? '') ?>">
+                                    <input type="text" id="cliente_logradouro" name="logradouro" value="<?= htmlspecialchars($editCliente['logradouro'] ?? '') ?>">
                                 </label>
 
                                 <label>
                                     Número
-                                    <input type="text" name="numero" value="<?= htmlspecialchars($editCliente['numero'] ?? '') ?>">
+                                    <input type="text" id="cliente_numero" name="numero" value="<?= htmlspecialchars($editCliente['numero'] ?? '') ?>">
                                 </label>
 
                                 <label>
                                     Complemento
-                                    <input type="text" name="complemento" value="<?= htmlspecialchars($editCliente['complemento'] ?? '') ?>">
+                                    <input type="text" id="cliente_complemento" name="complemento" value="<?= htmlspecialchars($editCliente['complemento'] ?? '') ?>">
                                 </label>
 
                                 <label>
                                     Bairro
-                                    <input type="text" name="bairro" value="<?= htmlspecialchars($editCliente['bairro'] ?? '') ?>">
+                                    <input type="text" id="cliente_bairro" name="bairro" value="<?= htmlspecialchars($editCliente['bairro'] ?? '') ?>">
                                 </label>
 
                                 <label>
                                     Município
-                                    <input type="text" name="municipio" value="<?= htmlspecialchars($editCliente['municipio'] ?? '') ?>">
+                                    <input type="text" id="cliente_cidade" name="municipio" value="<?= htmlspecialchars($editCliente['municipio'] ?? '') ?>">
                                 </label>
 
                                 <label>
                                     Código Municipal (IBGE)
-                                    <input type="text" name="codigo_municipal" value="<?= htmlspecialchars($editCliente['codigo_municipal'] ?? '') ?>">
+                                    <input type="text" id="cliente_codigo_ibge" name="codigo_municipal" value="<?= htmlspecialchars($editCliente['codigo_municipal'] ?? '') ?>">
                                 </label>
 
                                 <label>
                                     UF
-                                    <input type="text" name="uf" value="<?= htmlspecialchars($editCliente['uf'] ?? '') ?>">
+                                    <input type="text" id="cliente_uf" name="uf" value="<?= htmlspecialchars($editCliente['uf'] ?? '') ?>">
                                 </label>
 
                                 <label>
@@ -2360,6 +2557,11 @@ if (is_dir($imagesDir)) {
                                     <input type="text" name="cest" value="<?= htmlspecialchars($editProduto['cest'] ?? '') ?>">
                                 </label>
 
+                                <label>Origem da mercadoria<select name="merchandise_origin"><option value="">Selecione</option><?php foreach (['0'=>'0 - Nacional','1'=>'1 - Estrangeira direta','2'=>'2 - Estrangeira mercado interno','3'=>'3 - Nacional > 40% importado','4'=>'4 - Nacional PPB','5'=>'5 - Nacional ≤ 40% importado','6'=>'6 - Estrangeira sem similar','7'=>'7 - Estrangeira interna sem similar','8'=>'8 - Nacional > 70% importado'] as $code=>$label): ?><option value="<?= $code ?>" <?= (($editProduto['merchandise_origin'] ?? '') === $code) ? 'selected' : '' ?>><?= htmlspecialchars($label) ?></option><?php endforeach; ?></select></label>
+                                <label>EX TIPI<input type="text" name="extipi" value="<?= htmlspecialchars($editProduto['extipi'] ?? '') ?>"></label>
+                                <label>cBenef<input type="text" name="tax_benefit_code" value="<?= htmlspecialchars($editProduto['tax_benefit_code'] ?? '') ?>"></label>
+                                <label>FCI<input type="text" name="fci_number" value="<?= htmlspecialchars($editProduto['fci_number'] ?? '') ?>"></label>
+
                                 <label>
                                     Unidade
                                     <input type="text" name="unidade" value="<?= htmlspecialchars($editProduto['unidade'] ?? 'UN') ?>">
@@ -2369,6 +2571,9 @@ if (is_dir($imagesDir)) {
                                     GTIN / Código de Barras
                                     <input type="text" name="gtin" value="<?= htmlspecialchars($editProduto['gtin'] ?? '') ?>">
                                 </label>
+                                <label>Unidade tributável<input type="text" name="taxable_unit" value="<?= htmlspecialchars($editProduto['taxable_unit'] ?? ($editProduto['unidade'] ?? 'UN')) ?>"></label>
+                                <label>GTIN tributável<input type="text" name="gtin_tributable" value="<?= htmlspecialchars($editProduto['gtin_tributable'] ?? ($editProduto['gtin'] ?? 'SEM GTIN')) ?>"></label>
+                                <label>Fator de conversão<input type="number" step="0.000001" min="0.000001" name="conversion_factor" value="<?= htmlspecialchars((string)($editProduto['conversion_factor'] ?? 1)) ?>"></label>
 
                                 <label>
                                     CFOP Padrão
@@ -2384,11 +2589,13 @@ if (is_dir($imagesDir)) {
                                     Preço
                                     <input type="number" step="0.01" min="0" name="preco" value="<?= htmlspecialchars((string) ($editProduto['preco'] ?? 0)) ?>" required>
                                 </label>
+                                <label>Preço de custo<input type="number" step="0.0001" min="0" name="cost_price" value="<?= htmlspecialchars((string)($editProduto['cost_price'] ?? 0)) ?>"></label>
 
                                 <label>
                                     Estoque atual
                                     <input type="number" min="0" name="estoque_atual" value="<?= htmlspecialchars((string) ($editProduto['estoque_atual'] ?? 0)) ?>" required>
                                 </label>
+                                <label>Estoque mínimo<input type="number" step="0.0001" min="0" name="minimum_stock" value="<?= htmlspecialchars((string)($editProduto['minimum_stock'] ?? 0)) ?>"></label>
 
                                 <label>
                                     Status

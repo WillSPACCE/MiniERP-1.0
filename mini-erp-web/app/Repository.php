@@ -1,4 +1,8 @@
 <?php
+require_once __DIR__ . '/../src/Services/ProductFiscalData.php';
+require_once __DIR__ . '/../src/Contracts/CnpjLookupProviderContract.php';
+require_once __DIR__ . '/../src/Infrastructure/BrasilApiCnpjProvider.php';
+require_once __DIR__ . '/../src/Services/CnpjLookupService.php';
 
 // Repositório central da aplicação.
 // É o ponto de contato entre a interface web e o banco de dados.
@@ -11,14 +15,16 @@ class Repository {
     /** cache de colunas por tabela (por conexão) */
     private $columnCache = [];
 
-    public function __construct()
+    public function __construct(?PDO $connection = null, bool $initializeLegacyCompatibility = true)
     {
         // inicializa conexão e garante colunas essenciais
-        $this->pdo = Database::getConnection();
-        $this->ensureClienteColumns();
-        $this->ensureFornecedorColumns();
-        $this->ensureUsuarioColumns();
-        $this->ensureTenantsColumns();
+        $this->pdo = $connection ?? Database::getConnection();
+        if ($initializeLegacyCompatibility) {
+            $this->ensureClienteColumns();
+            $this->ensureFornecedorColumns();
+            $this->ensureUsuarioColumns();
+            $this->ensureTenantsColumns();
+        }
     }
 
     // métodos começam abaixo
@@ -79,6 +85,16 @@ class Repository {
     private function requireTenantId(): int
     {
         if (session_status() === PHP_SESSION_NONE) session_start();
+        $erpUserId = (int) ($_SESSION['erp_user_id'] ?? 0);
+        $erpTenantId = (int) ($_SESSION['erp_tenant_id'] ?? 0);
+        if ($erpUserId > 0 || $erpTenantId > 0) {
+            if ($erpUserId < 1 || $erpTenantId < 1
+                || (int) ($_SESSION['user_id'] ?? 0) !== $erpUserId
+                || (int) ($_SESSION['tenant_id'] ?? 0) !== $erpTenantId) {
+                throw new RuntimeException('Acesso negado: contexto ERP e compatibilidade legada divergentes.');
+            }
+            return $erpTenantId;
+        }
         $tid = $_SESSION['tenant_id'] ?? null;
         if (empty($tid)) {
             throw new RuntimeException('Acesso negado: tenant não selecionado na sessão.');
@@ -329,31 +345,36 @@ class Repository {
     // Salva impostos para um produto (inserir ou atualizar)
     public function saveProductTaxes(int $productId, array $taxes): void
     {
-        // garante que o product pertence ao tenant
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('SELECT id FROM produtos WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $productId, 'tid' => $tenantId]);
+        $productHasTenant = $this->hasColumn('produtos', 'tenant_id');
+        $stmt = $this->pdo->prepare('SELECT id FROM produtos WHERE id = :id' . ($productHasTenant ? ' AND tenant_id = :tid' : ''));
+        $params = ['id' => $productId]; if ($productHasTenant) $params['tid'] = $tenantId;
+        $stmt->execute($params);
         if (!$stmt->fetch()) throw new RuntimeException('Produto não encontrado ou não pertence ao tenant.');
 
-        $stmt = $this->pdo->prepare('INSERT INTO product_taxes (product_id, ipi, icms, pis, cofins) VALUES (:product_id, :ipi, :icms, :pis, :cofins) ON DUPLICATE KEY UPDATE ipi = :ipi, icms = :icms, pis = :pis, cofins = :cofins');
-        // grava tenant_id para facilitar auditoria e reforçar escopo
-        $stmt = $this->pdo->prepare('INSERT INTO product_taxes (product_id, ipi, icms, pis, cofins, tenant_id) VALUES (:product_id, :ipi, :icms, :pis, :cofins, :tid) ON DUPLICATE KEY UPDATE ipi = :ipi, icms = :icms, pis = :pis, cofins = :cofins, tenant_id = :tid');
-        $stmt->execute([
+        $payload = [
             'product_id' => $productId,
             'ipi' => (string)($taxes['ipi'] ?? ''),
             'icms' => (string)($taxes['icms'] ?? ''),
             'pis' => (string)($taxes['pis'] ?? ''),
             'cofins' => (string)($taxes['cofins'] ?? ''),
-            'tid' => $tenantId,
-        ]);
+        ];
+        $taxHasTenant = $this->hasColumn('product_taxes', 'tenant_id');
+        if ($taxHasTenant) $payload['tenant_id'] = $tenantId;
+        $fields = array_keys($payload);
+        $updates = array_map(fn(string $field): string => "$field = VALUES($field)", array_filter($fields, fn(string $field): bool => $field !== 'product_id'));
+        $stmt = $this->pdo->prepare('INSERT INTO product_taxes (`' . implode('`,`', $fields) . '`) VALUES (:' . implode(',:', $fields) . ') ON DUPLICATE KEY UPDATE ' . implode(', ', $updates));
+        $stmt->execute($payload);
     }
 
     // Retorna impostos de um produto ou null se não existir
     public function getProductTaxes(int $productId): ?array
     {
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('SELECT pt.* FROM product_taxes pt JOIN produtos p ON p.id = pt.product_id WHERE pt.product_id = :product_id AND p.tenant_id = :tid');
-        $stmt->execute(['product_id' => $productId, 'tid' => $tenantId]);
+        $hasTenant = $this->hasColumn('produtos', 'tenant_id');
+        $stmt = $this->pdo->prepare('SELECT pt.* FROM product_taxes pt JOIN produtos p ON p.id = pt.product_id WHERE pt.product_id = :product_id' . ($hasTenant ? ' AND p.tenant_id = :tid' : ''));
+        $params = ['product_id' => $productId]; if ($hasTenant) $params['tid'] = $tenantId;
+        $stmt->execute($params);
         $row = $stmt->fetch();
         return $row ?: null;
     }
@@ -431,21 +452,28 @@ class Repository {
     }
 
     // Lista todos os clientes em ordem decrescente de ID para o tenant.
-    public function listClientes(): array
+    public function listClientes(string $search = ''): array
     {
-        try {
-            $tenantId = $this->requireTenantId();
-            $hasCol = (bool) $this->pdo->query("SHOW COLUMNS FROM clientes LIKE 'tenant_id'")->fetch();
-            if ($hasCol) {
-                $stmt = $this->pdo->prepare('SELECT * FROM clientes WHERE tenant_id = :tid ORDER BY id DESC');
-                $stmt->execute(['tid' => $tenantId]);
-                return $stmt->fetchAll();
+        $tenantId = $this->requireTenantId();
+        $hasTenantColumn = $this->hasColumn('clientes', 'tenant_id');
+        $where = [];
+        $params = [];
+        if ($hasTenantColumn) { $where[] = 'tenant_id = :tid'; $params['tid'] = $tenantId; }
+        $search = trim($search);
+        if ($search !== '') {
+            $searchFields = array_values(array_filter(
+                ['nome', 'nome_fantasia', 'cpf_cnpj', 'email'],
+                fn (string $field): bool => $this->hasColumn('clientes', $field)
+            ));
+            if ($searchFields !== []) {
+                $where[] = '(' . implode(' OR ', array_map(fn (string $field): string => $field . ' LIKE :search', $searchFields)) . ')';
+                $params['search'] = '%' . $search . '%';
             }
-            return $this->pdo->query('SELECT * FROM clientes ORDER BY id DESC')->fetchAll();
-        } catch (Throwable $e) {
-            // fallback permissivo para ambientes de desenvolvimento
-            try { return $this->pdo->query('SELECT * FROM clientes ORDER BY id DESC')->fetchAll(); } catch (Throwable $e2) { return []; }
         }
+        $sql = 'SELECT * FROM clientes' . ($where ? ' WHERE ' . implode(' AND ', $where) : '') . ' ORDER BY id DESC';
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
     }
 
     // Busca um tenant pelo ID (usa o DB principal onde a tabela tenants existe)
@@ -473,8 +501,11 @@ class Repository {
     public function findCliente(int $id): ?array
     {
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('SELECT * FROM clientes WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $id, 'tid' => $tenantId]);
+        $hasTenantColumn = $this->hasColumn('clientes', 'tenant_id');
+        $stmt = $this->pdo->prepare('SELECT * FROM clientes WHERE id = :id' . ($hasTenantColumn ? ' AND tenant_id = :tid' : ''));
+        $params = ['id' => $id];
+        if ($hasTenantColumn) $params['tid'] = $tenantId;
+        $stmt->execute($params);
         $cliente = $stmt->fetch();
         return $cliente ?: null;
     }
@@ -482,23 +513,28 @@ class Repository {
     // Cria ou atualiza um cliente.
     public function saveCliente(array $data): void
     {
-        $this->ensureClienteColumns();
+        require_once __DIR__ . '/../src/Services/PersonFiscalData.php';
+        $fiscalData = (new \MiniErp\Services\PersonFiscalData($data))->toArray();
+        if (empty($_SESSION['erp_user_id'])) $this->ensureClienteColumns();
 
         $tenantId = $this->requireTenantId();
 
         $nome = trim((string) ($data['nome'] ?? ''));
         $email = trim((string) ($data['email'] ?? ''));
-        $cpfCnpj = preg_replace('/\D/', '', (string) ($data['cpf_cnpj'] ?? ''));
+        $cpfCnpj = $fiscalData['cpf_cnpj'];
 
-        if ($nome === '' || $cpfCnpj === '') {
-            throw new InvalidArgumentException('Nome e CPF/CNPJ são obrigatórios para cadastro fiscal.');
+        if ($nome === '' || ($cpfCnpj === '' && $fiscalData['person_type'] !== 'FOREIGN')) {
+            throw new InvalidArgumentException('Nome e documento nacional são obrigatórios para PF/PJ.');
+        }
+        if ($cpfCnpj !== '') {
+            $duplicateSql = 'SELECT id FROM clientes WHERE cpf_cnpj = :document' . (!empty($data['id']) ? ' AND id <> :id' : '') . ' LIMIT 1';
+            $duplicate = $this->pdo->prepare($duplicateSql); $duplicateParams = ['document' => $cpfCnpj];
+            if (!empty($data['id'])) $duplicateParams['id'] = (int) $data['id'];
+            $duplicate->execute($duplicateParams);
+            if ($duplicate->fetch()) throw new InvalidArgumentException('CPF/CNPJ já cadastrado para outra pessoa neste tenant.');
         }
 
-        if (!(strlen($cpfCnpj) === 11 || strlen($cpfCnpj) === 14)) {
-            throw new InvalidArgumentException('CPF/CNPJ inválido: verifique a quantidade de dígitos (11 para CPF, 14 para CNPJ).');
-        }
-
-        $fone1 = trim((string) ($data['fone_principal'] ?? ''));
+        $fone1 = trim((string) ($data['fone_principal'] ?? $data['telefone'] ?? ''));
         $fone2 = trim((string) ($data['fone_2'] ?? ''));
         $fone3 = trim((string) ($data['fone_3'] ?? ''));
         if ($fone1 !== '' && !$this->isValidPhone($fone1)) {
@@ -515,16 +551,17 @@ class Repository {
         if (!$isMinimal) {
             $cep = preg_replace('/\D/', '', (string) ($data['cep'] ?? ''));
             $logradouro = trim((string) ($data['logradouro'] ?? ''));
-            $telefonePrincipal = trim((string) ($data['fone_principal'] ?? ''));
-            if ($cep === '' || $logradouro === '' || $telefonePrincipal === '') {
-                throw new InvalidArgumentException('Para cadastro completo do cliente, preencha CEP, logradouro e telefone principal.');
-            }
+            $telefonePrincipal = $fone1;
+            $requiredAddress=['logradouro'=>'logradouro','numero'=>'número','bairro'=>'bairro','cidade'=>'município','codigo_ibge'=>'código IBGE','estado'=>'UF','cep'=>'CEP'];$missing=[];
+            foreach($requiredAddress as$field=>$label){$value=match($field){'cidade'=>trim((string)($data['cidade']??$data['municipio']??'')),'codigo_ibge'=>trim((string)($data['codigo_ibge']??$data['codigo_municipal']??'')),'estado'=>trim((string)($data['estado']??$data['uf']??'')),'cep'=>$cep,default=>trim((string)($data[$field]??''))};if($value==='')$missing[]=$label;}
+            if($missing)throw new InvalidArgumentException('Complete o endereço fiscal do cliente: '.implode(', ',$missing).'.');
+            if($telefonePrincipal==='')throw new InvalidArgumentException('Informe o telefone principal do cliente.');
         }
 
         $payload = [
             'nome' => $nome,
             'email' => $email,
-            'telefone' => trim((string) ($data['telefone'] ?? '')),
+            'telefone' => trim((string) ($data['telefone'] ?? $fone1)),
             'cpf_cnpj' => $cpfCnpj,
             'inscricao_estadual' => trim((string) ($data['inscricao_estadual'] ?? '')),
             'logradouro' => trim((string) ($data['logradouro'] ?? '')),
@@ -544,7 +581,7 @@ class Repository {
             'genero' => trim((string) ($data['genero'] ?? '')),
             'data_cadastro' => $this->normalizeOptionalDate($data['data_cadastro'] ?? date('Y-m-d')),
             'nome_contato' => trim((string) ($data['nome_contato'] ?? '')),
-            'fone_principal' => trim((string) ($data['fone_principal'] ?? '')),
+            'fone_principal' => $fone1,
             'fone_2' => trim((string) ($data['fone_2'] ?? '')),
             'fone_3' => trim((string) ($data['fone_3'] ?? '')),
             'estado' => trim((string) ($data['estado'] ?? '')),
@@ -569,29 +606,12 @@ class Repository {
             'antt' => trim((string) ($data['antt'] ?? '')),
             'frete' => $this->normalizeOptionalNumber($data['frete'] ?? '0', 0.0),
             'valor_frete' => $this->normalizeOptionalNumber($data['valor_frete'] ?? '0', 0.0),
-            // grava tenant_id para isolar por empresa
-            'tenant_id' => $tenantId,
             'data' => $data['data'] ?? null,
         ];
+        $payload = array_merge($payload, $fiscalData);
 
-        // If no explicit id provided but the CNPJ already exists, treat as update
-        if (empty($data['id'])) {
-            try {
-                // Consultar no DB principal para garantir precisão independentemente da conexão atual
-                $config = require __DIR__ . '/../config.php';
-                $dbConf = $config['db'];
-                $dsn = sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $dbConf['host'], $dbConf['port'], $dbConf['database']);
-                $pdoMain = new PDO($dsn, $dbConf['username'], $dbConf['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-                $check = $pdoMain->prepare('SELECT id FROM tenants WHERE cnpj = :cnpj LIMIT 1');
-                $check->execute(['cnpj' => $cnpj]);
-                $found = $check->fetch();
-                if ($found && !empty($found['id'])) {
-                    $data['id'] = (int)$found['id'];
-                }
-            } catch (Throwable $e) {
-                // ignore and continue to insert
-            }
-        }
+        if ($this->hasColumn('clientes', 'tenant_id')) $payload['tenant_id'] = $tenantId;
+        $payload = array_filter($payload, fn (string $field): bool => $this->hasColumn('clientes', $field), ARRAY_FILTER_USE_KEY);
 
         if (!empty($data['id'])) {
             $set = [];
@@ -599,7 +619,8 @@ class Repository {
                 $set[] = "$field = :$field";
             }
             $payload['id'] = (int) $data['id'];
-            $stmt = $this->pdo->prepare('UPDATE clientes SET ' . implode(', ', $set) . ' WHERE id = :id AND tenant_id = :tenant_id');
+            $hasTenantColumn = array_key_exists('tenant_id', $payload);
+            $stmt = $this->pdo->prepare('UPDATE clientes SET ' . implode(', ', $set) . ' WHERE id = :id' . ($hasTenantColumn ? ' AND tenant_id = :tenant_id' : ''));
             $stmt->execute($payload);
             return;
         }
@@ -614,8 +635,11 @@ class Repository {
     public function deleteCliente(int $id): void
     {
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('DELETE FROM clientes WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $id, 'tid' => $tenantId]);
+        $hasTenantColumn = $this->hasColumn('clientes', 'tenant_id');
+        $stmt = $this->pdo->prepare("UPDATE clientes SET status = 'inativo' WHERE id = :id" . ($hasTenantColumn ? ' AND tenant_id = :tid' : ''));
+        $params = ['id' => $id];
+        if ($hasTenantColumn) $params['tid'] = $tenantId;
+        $stmt->execute($params);
     }
 
     // Lista todos os produtos cadastrados.
@@ -654,8 +678,9 @@ class Repository {
     public function findCfop(int $id): ?array
     {
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('SELECT * FROM cfops WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $id, 'tid' => $tenantId]);
+        $hasTenant = $this->hasColumn('cfops', 'tenant_id');
+        $stmt = $this->pdo->prepare('SELECT * FROM cfops WHERE id = :id' . ($hasTenant ? ' AND tenant_id = :tid' : ''));
+        $params=['id'=>$id];if($hasTenant)$params['tid']=$tenantId;$stmt->execute($params);
         $cfop = $stmt->fetch();
         return $cfop ?: null;
     }
@@ -670,35 +695,33 @@ class Repository {
         }
 
         $tenantId = $this->requireTenantId();
+        $hasTenant = $this->hasColumn('cfops', 'tenant_id');
         if (!empty($data['id'])) {
-            $stmt = $this->pdo->prepare('UPDATE cfops SET codigo = :codigo, descricao = :descricao, natureza = :natureza, aplicacao = :aplicacao, status = :status WHERE id = :id AND tenant_id = :tid');
-            $stmt->execute([
+            $stmt = $this->pdo->prepare('UPDATE cfops SET codigo = :codigo, descricao = :descricao, natureza = :natureza, aplicacao = :aplicacao, status = :status WHERE id = :id' . ($hasTenant ? ' AND tenant_id = :tid' : ''));
+            $params=[
                 'id' => (int) $data['id'],
                 'codigo' => $codigo,
                 'descricao' => $descricao,
                 'natureza' => trim((string) ($data['natureza'] ?? '')),
                 'aplicacao' => trim((string) ($data['aplicacao'] ?? '')),
                 'status' => trim((string) ($data['status'] ?? 'ativo')),
-                'tid' => $tenantId,
-            ]);
+            ];if($hasTenant)$params['tid']=$tenantId;$stmt->execute($params);
             return;
         }
-        $stmt = $this->pdo->prepare('INSERT INTO cfops (codigo, descricao, natureza, aplicacao, status, tenant_id) VALUES (:codigo, :descricao, :natureza, :aplicacao, :status, :tid)');
-        $stmt->execute([
+        $stmt = $this->pdo->prepare('INSERT INTO cfops (codigo, descricao, natureza, aplicacao, status' . ($hasTenant ? ', tenant_id' : '') . ') VALUES (:codigo, :descricao, :natureza, :aplicacao, :status' . ($hasTenant ? ', :tid' : '') . ')');
+        $params=[
             'codigo' => $codigo,
             'descricao' => $descricao,
             'natureza' => trim((string) ($data['natureza'] ?? '')),
             'aplicacao' => trim((string) ($data['aplicacao'] ?? '')),
             'status' => trim((string) ($data['status'] ?? 'ativo')),
-            'tid' => $tenantId,
-        ]);
+        ];if($hasTenant)$params['tid']=$tenantId;$stmt->execute($params);
     }
 
     public function deleteCfop(int $id): void
     {
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('DELETE FROM cfops WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $id, 'tid' => $tenantId]);
+        $hasTenant=$this->hasColumn('cfops','tenant_id');$stmt=$this->pdo->prepare("UPDATE cfops SET status='inativo' WHERE id=:id".($hasTenant?' AND tenant_id=:tid':''));$params=['id'=>$id];if($hasTenant)$params['tid']=$tenantId;$stmt->execute($params);
     }
 
     public function listFornecedores(): array
@@ -1238,38 +1261,17 @@ class Repository {
         $stmt->execute(['id' => $id]);
     }
 
-    // Consulta informações de CNPJ via BrasilAPI (https://brasilapi.com.br/api/cnpj/v1/{cnpj})
-    // Retorna array decodificado ou null em caso de erro.
+    // Wrapper legado; novas entradas devem depender de CnpjLookupService.
     public function fetchCnpjData(string $cnpj): ?array
     {
-        $cnpj = preg_replace('/\D/', '', $cnpj);
-        if ($cnpj === '') return null;
-
-        $urls = [
-            sprintf('https://brasilapi.com.br/api/cnpj/v1/%s', $cnpj),
-            sprintf('https://brasilapi.com.br/cnpj/v1/%s', $cnpj),
-        ];
-
-        foreach ($urls as $url) {
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 8);
-            curl_setopt($ch, CURLOPT_USERAGENT, 'MiniERP/1.0');
-            $resp = curl_exec($ch);
-            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $err = curl_error($ch);
-            curl_close($ch);
-
-            if ($resp === false || $code >= 400) {
-                continue;
-            }
-
-            $data = json_decode($resp, true);
-            if (is_array($data) && !empty($data)) return $data;
+        try {
+            $result = (new \MiniErp\Services\CnpjLookupService(
+                new \MiniErp\Infrastructure\BrasilApiCnpjProvider()
+            ))->lookup($cnpj);
+            return $result?->toArray();
+        } catch (\Throwable) {
+            return null;
         }
-
-        return null;
     }
 
     // Atribui um usuário a uma empresa (compatibilidade)
@@ -1749,8 +1751,11 @@ class Repository {
     public function findProduto(int $id): ?array
     {
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('SELECT * FROM produtos WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $id, 'tid' => $tenantId]);
+        $hasTenant = $this->hasColumn('produtos', 'tenant_id');
+        $stmt = $this->pdo->prepare('SELECT * FROM produtos WHERE id = :id' . ($hasTenant ? ' AND tenant_id = :tid' : ''));
+        $params = ['id' => $id];
+        if ($hasTenant) $params['tid'] = $tenantId;
+        $stmt->execute($params);
         $produto = $stmt->fetch();
         return $produto ?: null;
     }
@@ -1771,57 +1776,41 @@ class Repository {
             throw new InvalidArgumentException('Nome e código do produto são obrigatórios.');
         }
 
-        $ncm = trim((string) ($data['ncm'] ?? ''));
-        $cest = trim((string) ($data['cest'] ?? ''));
-        $unidade = trim((string) ($data['unidade'] ?? 'UN')) ?: 'UN';
-        $gtin = trim((string) ($data['gtin'] ?? ''));
-        $cfopPadrao = trim((string) ($data['cfop_padrao'] ?? ''));
+        $payload = array_merge([
+            'nome' => $nome,
+            'codigo' => $codigo,
+            'categoria' => trim((string)($data['categoria'] ?? '')),
+            'preco' => max(0, $preco),
+            'estoque_atual' => max(0, (float)($data['estoque_atual'] ?? 0)),
+            'status' => in_array(($data['status'] ?? 'ativo'), ['ativo', 'inativo'], true) ? $data['status'] : 'ativo',
+            'company_id' => $currentCompany,
+        ], (new \MiniErp\Services\ProductFiscalData($data))->toArray());
+        if ($this->hasColumn('produtos', 'tenant_id')) $payload['tenant_id'] = $tenantId;
+        $payload = array_filter($payload, fn(string $field): bool => $this->hasColumn('produtos', $field), ARRAY_FILTER_USE_KEY);
 
         if (!empty($data['id'])) {
-            $stmt = $this->pdo->prepare('UPDATE produtos SET nome = :nome, codigo = :codigo, ncm = :ncm, cest = :cest, unidade = :unidade, gtin = :gtin, cfop_padrao = :cfop_padrao, categoria = :categoria, preco = :preco, estoque_atual = :estoque_atual, status = :status, company_id = :company_id, tenant_id = :tenant_id WHERE id = :id AND tenant_id = :tenant_id');
-            $stmt->execute([
-                'id' => (int) $data['id'],
-                'nome' => $nome,
-                'codigo' => $codigo,
-                'ncm' => $ncm,
-                'cest' => $cest,
-                'unidade' => $unidade,
-                'gtin' => $gtin,
-                'cfop_padrao' => $cfopPadrao,
-                'categoria' => trim((string) ($data['categoria'] ?? '')),
-                'preco' => $preco,
-                'estoque_atual' => (int) ($data['estoque_atual'] ?? 0),
-                'status' => trim((string) ($data['status'] ?? 'ativo')),
-                'company_id' => $currentCompany,
-                'tenant_id' => $tenantId,
-            ]);
+            $set = array_map(fn(string $field): string => "$field = :$field", array_keys($payload));
+            $payload['id'] = (int)$data['id'];
+            $hasTenant = array_key_exists('tenant_id', $payload);
+            $stmt = $this->pdo->prepare('UPDATE produtos SET ' . implode(', ', $set) . ' WHERE id = :id' . ($hasTenant ? ' AND tenant_id = :tenant_id' : ''));
+            $stmt->execute($payload);
             return;
         }
 
-        $stmt = $this->pdo->prepare('INSERT INTO produtos (nome, codigo, ncm, cest, unidade, gtin, cfop_padrao, categoria, preco, estoque_atual, status, company_id, tenant_id) VALUES (:nome, :codigo, :ncm, :cest, :unidade, :gtin, :cfop_padrao, :categoria, :preco, :estoque_atual, :status, :company_id, :tenant_id)');
-        $stmt->execute([
-            'nome' => $nome,
-            'codigo' => $codigo,
-            'ncm' => $ncm,
-            'cest' => $cest,
-            'unidade' => $unidade,
-            'gtin' => $gtin,
-            'cfop_padrao' => $cfopPadrao,
-            'categoria' => trim((string) ($data['categoria'] ?? '')),
-            'preco' => $preco,
-            'estoque_atual' => (int) ($data['estoque_atual'] ?? 0),
-            'status' => trim((string) ($data['status'] ?? 'ativo')),
-            'company_id' => $currentCompany,
-            'tenant_id' => $tenantId,
-        ]);
+        $fields = array_keys($payload);
+        $stmt = $this->pdo->prepare('INSERT INTO produtos (`' . implode('`,`', $fields) . '`) VALUES (:' . implode(',:', $fields) . ')');
+        $stmt->execute($payload);
     }
 
     // Remove um produto pelo ID (verifica tenant)
     public function deleteProduto(int $id): void
     {
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('DELETE FROM produtos WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $id, 'tid' => $tenantId]);
+        $hasTenant = $this->hasColumn('produtos', 'tenant_id');
+        $stmt = $this->pdo->prepare("UPDATE produtos SET status = 'inativo' WHERE id = :id" . ($hasTenant ? ' AND tenant_id = :tid' : ''));
+        $params = ['id' => $id];
+        if ($hasTenant) $params['tid'] = $tenantId;
+        $stmt->execute($params);
     }
 
 }

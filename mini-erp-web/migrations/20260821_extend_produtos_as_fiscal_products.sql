@@ -1,0 +1,10 @@
+-- FISCAL-04: atributos permanentes/comerciais do Produto. Aditiva e idempotente.
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS gtin_tributable VARCHAR(14) NOT NULL DEFAULT 'SEM GTIN' AFTER gtin;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS taxable_unit VARCHAR(6) NOT NULL DEFAULT 'UN' AFTER unidade;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS conversion_factor DECIMAL(18,6) NOT NULL DEFAULT 1 AFTER taxable_unit;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS merchandise_origin CHAR(1) NOT NULL DEFAULT '' AFTER cest;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS extipi VARCHAR(3) NOT NULL DEFAULT '' AFTER merchandise_origin;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS tax_benefit_code VARCHAR(20) NOT NULL DEFAULT '' AFTER extipi;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS fci_number CHAR(36) NOT NULL DEFAULT '' AFTER tax_benefit_code;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS cost_price DECIMAL(18,4) NOT NULL DEFAULT 0 AFTER categoria;
+ALTER TABLE produtos ADD COLUMN IF NOT EXISTS minimum_stock DECIMAL(18,4) NOT NULL DEFAULT 0 AFTER estoque_atual;

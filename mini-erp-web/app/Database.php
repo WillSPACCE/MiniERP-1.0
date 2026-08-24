@@ -9,6 +9,17 @@ class Database
     // Quando definido, força a conexão a usar este database name (tenant-specific)
     private static ?string $tenantDbName = null;
 
+    /**
+     * LEGACY COMPATIBILITY: installs a tenant PDO that was already resolved from
+     * an authenticated TenantContext. This path intentionally skips legacy
+     * database creation, schema initialization, migrations and seeds.
+     */
+    public static function useResolvedTenantConnection(PDO $connection): void
+    {
+        self::$tenantDbName = null;
+        self::$connection = $connection;
+    }
+
     // Retorna a conexão pronta para uso.
     public static function getConnection(): PDO
     {

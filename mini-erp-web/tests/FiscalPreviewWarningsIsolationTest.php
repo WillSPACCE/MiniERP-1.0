@@ -1,0 +1,8 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/../vendor/autoload.php';
+use MiniErp\Services\FiscalPreviewPreflightService;
+function warning_assert(bool$ok,string$message):void{if(!$ok)throw new RuntimeException($message);}
+$preflight=new FiscalPreviewPreflightService();$warning=$preflight->warning('FISCAL_RULE_NOT_FOUND','Tributação pendente.',['product_id'=>5]);warning_assert($warning['severity']==='WARNING'&&$warning['code']==='FISCAL_RULE_NOT_FOUND','structured warning');$tax=$preflight->technicalTax('0000','0');warning_assert($tax['preview_only']===true&&$tax['resolved']===false&&$tax['cfop']==='0000','preview-only technical tax');foreach(['icms','pis','cofins']as$group)warning_assert(($tax[$group]['preview_only']??false)===true&&($tax[$group]['amount']??null)==='0.00','technical zero '.$group);$text=$preflight->warningText([$warning]);foreach(['TRIBUTAÇÃO PENDENTE','não representa cálculo fiscal definitivo','NÃO CALCULADO PARA PREVIEW']as$needle)warning_assert(str_contains($text,$needle),'warning text '.$needle);
+$preview=(string)file_get_contents(__DIR__.'/../src/Services/FiscalDanfePreviewService.php');$realPreflight=(string)file_get_contents(__DIR__.'/../src/Services/FiscalDocumentPreflightService.php');$pipeline=(string)file_get_contents(__DIR__.'/../src/Services/OfflineFiscalDocumentPipelineService.php');warning_assert(str_contains($preview,'FiscalPreviewPreflightService'),'preview policy');warning_assert(!str_contains($realPreflight,'FiscalPreviewPreflightService')&&!str_contains($pipeline,'technicalTax'),'real pipeline isolation');warning_assert(str_contains($pipeline,'FISCAL_PREFLIGHT_FAILED')||str_contains($pipeline,'preflight'),'real pipeline remains strict');
+echo "FiscalPreviewWarningsIsolation PASS\n";

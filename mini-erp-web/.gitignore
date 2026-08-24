@@ -1,3 +1,13 @@
 database/*.sqlite
 vendor/
 .env
+storage/test-secrets/
+storage/fiscal/certificates/
+storage/fiscal/secrets/
+*.test-only.pfx
+*.test-only.p12
+.rnd
+output/
+storage/cache/
+storage/fiscal/master.key
+storage/fiscal/danfe-preview/

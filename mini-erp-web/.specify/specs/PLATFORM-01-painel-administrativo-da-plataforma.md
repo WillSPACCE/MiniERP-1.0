@@ -8,6 +8,38 @@
 
 **Input**: Product and architecture decisions clarified for the platform administrative control-plane.
 
+## Implementation Baseline — PLATFORM-00
+
+- Specification: **completed and approved for v1**.
+- Integrated implementation: **started only with PLATFORM-01-T01, the authenticated read-only bootstrap**; the broader Platform Panel remains unimplemented.
+- Reusable foundations: **partially implemented in isolation**.
+
+At the PLATFORM-00 baseline, the repository contained isolated context, tenant-selection, connection-resolution and create-user foundations, but no integrated Platform Panel runtime.
+
+The Platform Panel still has no persisted PlatformAdmin identity/authorization model, real AdministrativeContext composition, dedicated lifecycle, audit trail, `last_login`/history, platform blocking policies, traceable provisioning, or full administrative UI.
+
+After PLATFORM-01-T01, `/plataforma/login.php` and `/plataforma/` provide dedicated login, administrative session, logout and dashboard entrypoints. Authorization is transitional: an environment allowlist is supported and, by explicit temporary operational decision, active `admin@localhost` with password `admin` is also accepted. This compatibility is not the approved definitive PlatformAdmin model and composes no tenant AdministrativeContext or data-plane access.
+
+After PLATFORM-01-T02, authorized PlatformAdmin identities can create a logical tenant record and edit only its administrative identity fields in the MAIN database. New records remain unprovisioned (`db_name` is not supplied and remains null); lifecycle transitions, provisioning, blocking and tenant-user administration remain outside this task.
+
+After PLATFORM-01-T03, the panel interprets the legacy textual status through a fail-closed lifecycle policy and renders state-dependent actions. This is an application-level compatibility layer only: it performs no status transition, provisioning, user creation, ERP access or real blocking. Persisted `company_status`, `provisioning_status` and `schema_version` remain future schema work.
+
+After PLATFORM-01-T04, an authorized and explicitly confirmed POST may provision an empty dedicated database derived only from `tenant_id`, using the structural schema without seeds. Physical conflicts and partial failures are fail-closed and never trigger automatic DROP/adoption. T04 does not create users or provide ERP access. Matrix/branches remain future work, including a future choice between establishments inside one tenant database and a physical database per branch; initial selected-data import will be a snapshot rather than continuous synchronization.
+
+After PLATFORM-01-T05, new provisioning resolves the backend-defined `v1` template from `database/tenant-template/v1/schema.sql`. The clean template contains operational tables only and excludes seeds, tenant registry and canonical authentication structures. Persisting `schema_version` requires an explicit, unapplied MAIN migration; until it is applied, provisioning fails before physical database creation. Existing tenants, including tenant 14, remain unclassified because their legacy 12-table structure is not exactly equivalent to v1.
+
+After PLATFORM-01-T06, tenant user administration is integrated into the Control-Plane using `mini_erp.usuarios` as the canonical identity directory. Operations derive tenant scope from an explicit AdministrativeContext, enforce global e-mail uniqueness evidenced by the MAIN constraint, hash passwords, and scope every existing-user mutation by both user and tenant. No local tenant-user synchronization, tenant login, ERP entry, blocking policy or impersonation is implemented.
+
+After PLATFORM-01-T10A, `/erp/` provides the tenant user's own login and a minimal read-only ERP. Authentication uses the canonical MAIN identity, requires the user's `tenant_id` to match the public company slug, validates that the company is active, unblocked and provisioned, then composes `TenantContext` and resolves the dedicated database through `TenantConnectionResolver`. The Control-Plane only links to this login; it does not auto-login or impersonate. T10 remains partial: T10B (ERP entrypoint stabilization), T10C (tenant-backed CRUD integration) and T10D (definitive `/empresa/{slug}` route/link) remain pending, as do T07–T09.
+
+PLATFORM-01-T10R corrects the visual integration from T10A without weakening its authentication model. `/erp/` is now an authentication/redirect boundary and authenticated tenant users enter the pre-existing ERP at `/?page=dashboard`. A localized `ErpLegacyBootstrap` derives legacy session compatibility from the revalidated context and installs the context-resolved PDO before the legacy Repository is created. No parallel ERP interface remains. CRUD behavior is deferred to ERP-CRUD-01 through ERP-CRUD-07.
+
+PLATFORM-01-T10R2 makes the historical styled `public/login.php` the official tenant login UI. The Platform button targets `/login.php?empresa={slug}` directly; the displayed company is resolved from that explicit slug in MAIN, while authentication remains delegated to `ErpAuthenticationService`. Invalid slugs fail closed, Default Tenant is not inferred, and successful authentication enters the existing dashboard. `/erp/login.php` is redirect-only compatibility.
+
+FISCAL-00 establishes that `tenants` remains the control-plane identity/lifecycle record and must not become the complete fiscal issuer aggregate. Fiscal establishment data, readiness, credentials, series and document snapshots belong to the tenant data-plane; the Platform may expose readiness/checklists without duplicating canonical fiscal values or treating operational activation as permission to issue documents.
+
+This baseline records implementation status only. It does not change any approved v1 product decision in this specification.
+
 ## User Scenarios & Testing
 
 ### User Story 1 - Plataforma administra empresas e tenants (Priority: P1)
