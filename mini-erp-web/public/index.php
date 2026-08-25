@@ -11,6 +11,7 @@ require_once __DIR__ . '/../src/Fiscal/TaxRuleResolver.php';
 require_once __DIR__ . '/../src/Repositories/MariaDbTaxRuleRepository.php';
 require_once __DIR__ . '/../src/Repositories/FiscalOperationRepository.php';
 require_once __DIR__ . '/../src/Repositories/IssuedOrdersRepository.php';
+require_once __DIR__ . '/../src/Repositories/MasterDataDirectoryRepository.php';
 require_once __DIR__ . '/../src/Repositories/FiscalDocumentEventRepository.php';
 require_once __DIR__ . '/../src/Services/CreateInternalFiscalDocumentService.php';
 require_once __DIR__ . '/../src/Services/FlashFormState.php';
@@ -771,6 +772,7 @@ if (is_dir($imagesDir)) {
     <meta name="theme-color" content="#1e88e5">
     <link rel="stylesheet" href="/assets/style.css">
     <link rel="stylesheet" href="/assets/issued-orders.css">
+    <link rel="stylesheet" href="/assets/erp-companies.css">
     <link rel="stylesheet" href="/assets/app-ui.css">
     <link rel="stylesheet" href="/assets/app-feedback.css">
     <link rel="stylesheet" href="/assets/ui-forms.css">
@@ -1289,6 +1291,15 @@ if (is_dir($imagesDir)) {
 
                 case 'cadastro':
                     $tab = $_GET['tab'] ?? 'pessoas';
+                    $legacyPeopleTabs = ['fornecedores' => 'fornecedor', 'motoristas' => 'motorista', 'transportadoras' => 'transportadora'];
+                    if (isset($legacyPeopleTabs[$tab])) {
+                        $_GET['people_type'] = $legacyPeopleTabs[$tab];
+                        $tab = 'pessoas';
+                    }
+                    if (!in_array($tab, ['pessoas', 'produtos', 'cfops'], true)) $tab = 'pessoas';
+                    $_SESSION['erp_master_data_csrf'] ??= bin2hex(random_bytes(24));
+                    require __DIR__ . '/includes/master_data_configuration.php';
+                    if (false):
                     ?>
                     <section class="page-header">
                         <div>
@@ -2018,7 +2029,7 @@ if (is_dir($imagesDir)) {
                             <p>Área de cadastro de <?=htmlspecialchars($tab)?>.</p>
                         <?php endif; ?>
                     </div>
-                    <?php
+                    <?php endif;
                     break;
 
                 case 'configuracao':
@@ -2038,19 +2049,20 @@ if (is_dir($imagesDir)) {
                         <a class="tab <?= ($tab === 'fiscal') ? 'active' : '' ?>" href="?page=configuracao&tab=fiscal" style="padding:8px 12px;border:1px solid #ccc;border-bottom:none;text-decoration:none;<?= ($tab === 'fiscal') ? 'background:#fff;font-weight:600;' : 'background:#f5f5f5;' ?>">Fiscal</a>
                     </nav>
 
-                    <section class="page-header">
+                    <?php if($tab!=='empresa'): ?><section class="page-header">
                         <div>
                             <p class="eyebrow">Configuração</p>
                             <h2>Configuração da Empresa</h2>
                         </div>
                         <a class="btn primary" href="?page=configuracao">Cadastrar Empresa</a>
-                    </section>
+                    </section><?php endif; ?>
 
                     <?php if ($tab === 'fiscal'): ?>
                         <div class="panel"><h3>Central de Configuração Fiscal</h3><p>CFOP, CSC, ICMS, PIS/COFINS, IPI, IBS/CBS e Imposto Seletivo usam a mesma fonte no banco deste tenant.</p><a class="btn primary" href="/plataforma/empresa-fiscal-central.php?id=<?= (int)($_SESSION['erp_tenant_id'] ?? $_SESSION['tenant_id'] ?? 0) ?>">Abrir Central Fiscal NF-e / NFC-e</a></div>
                     <?php endif; ?>
 
-                    <?php if ($tab === 'empresa'): ?>
+                    <?php if ($tab === 'empresa'): include __DIR__.'/includes/company_configuration.php'; endif; ?>
+                    <?php if (false && $tab === 'empresa'): ?>
                     <?php if ($secureErpRuntime !== null): $erpReadiness = (new \MiniErp\Services\FiscalReadiness())->evaluate($erpEstablishment); ?>
                     <div class="panel"><h3>Empresa / Estabelecimento fiscal</h3><p>Fonte canônica deste tenant · Fiscal Readiness: <strong><?= htmlspecialchars($erpReadiness['status']) ?></strong> (<?= $erpReadiness['complete_count'] ?>/<?= $erpReadiness['total_count'] ?>).</p><?php if (isset($_GET['fiscal_saved'])): ?><p class="message success">Cadastro fiscal salvo.</p><?php endif; ?><?php if (!$erpEstablishmentSchemaAvailable): ?><p class="message error">Migration FISCAL-01 ainda não aplicada neste banco. Faça backup e aplique-a manualmente.</p><?php else: ?><?php renderEstablishmentForm($erpEstablishment ?? [], (string) $_SESSION['erp_establishment_csrf']); ?><?php endif; ?></div>
                     <?php endif; ?>
