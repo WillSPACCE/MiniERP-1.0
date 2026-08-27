@@ -667,6 +667,53 @@ document.addEventListener('DOMContentLoaded', function () {
         computeTotals();
     });
 
+    const testFillButton = document.querySelector('[data-order-test-fill]');
+    if (testFillButton) testFillButton.addEventListener('click', function () {
+        const form = document.getElementById('pedido-form');
+        if (!form) return;
+        const setValue = (name, value) => {
+            const field = form.elements.namedItem(name);
+            if (!field) return;
+            field.value = value;
+            field.dispatchEvent(new Event('change', { bubbles: true }));
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        const selectFirst = name => {
+            const field = form.elements.namedItem(name);
+            if (!(field instanceof HTMLSelectElement)) return false;
+            const option = [...field.options].find(item => item.value !== '' && !item.disabled);
+            if (!option) return false;
+            setValue(name, option.value);
+            return true;
+        };
+
+        btnClear?.click();
+        const direction = String(form.elements.namedItem('tipo')?.value || 'saida');
+        selectFirst(direction === 'entrada' ? 'fornecedor_id' : 'cliente_id');
+        selectFirst('cfop_id');
+        setValue('fiscal_model', '55');
+        setValue('purpose', 'NORMAL');
+        setValue('presence_indicator', '1');
+        setValue('codigo_interno', `TESTE-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`);
+        setValue('condicao_pagamento', 'avista');
+        setValue('documento', 'PIX');
+        setValue('vencimento', new Date().toISOString().slice(0, 10));
+        setValue('frete', '0');
+        setValue('desconto_percent', '0');
+        setValue('desconto_valor', '0');
+        setValue('observacoes', 'PREENCHIMENTO DE TESTE — revisar antes de gravar ou preparar nota.');
+        setValue('freight_mode', '9');
+
+        const product = (window.PRODUCTS || []).find(item => item.status !== 'inativo' && Number(item.preco) > 0)
+            || (window.PRODUCTS || []).find(item => item.status !== 'inativo');
+        if (product && search) {
+            search.value = String(product.codigo || product.id);
+            search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        }
+        testFillButton.blur();
+        window.AppToast?.show('Dados de teste preenchidos. Revise antes de gravar.', 'success', 4500);
+    });
+
     // global keys
     document.addEventListener('keydown', function (e) {
         if (e.key === 'F8') { e.preventDefault(); const s = document.getElementById('product-search'); if (s) s.focus(); }

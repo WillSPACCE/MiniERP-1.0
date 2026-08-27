@@ -680,6 +680,9 @@ if ($secureErpRuntime !== null) {
 } elseif (!empty($_SESSION['user_id'])) {
     $currentUser = $repo->findUsuarioById((int) $_SESSION['user_id']);
 }
+$canUseOrderTestFill = (int)($currentUser['id'] ?? 0) === 9
+    && strtolower((string)($currentUser['role'] ?? '')) === 'admin'
+    && (int)($_SESSION['erp_user_id'] ?? $_SESSION['user_id'] ?? 0) === 9;
 
 // Se não estiver na página de login e não existe usuário autenticado, redireciona para login
 if ($page !== 'login' && !$currentUser) {
@@ -1398,13 +1401,18 @@ if (is_dir($imagesDir)) {
                                     </div>
                                 </div>
 
-                                <div class="order-action-bar" role="toolbar" aria-label="Rotinas do pedido" data-order-action-bar>
-                                    <button class="order-routine order-routine--primary" type="submit" name="action" value="save_fiscal_order" data-order-action="save" title="Gravar pedido" aria-label="Gravar pedido"><span class="order-routine__icon" aria-hidden="true">▣</span><span>Gravar</span></button>
-                                    <button class="order-routine" type="submit" data-fiscal-action="finalize" data-order-action="note" title="Salvar e preparar documento interno na Central de Notas" aria-label="Preparar nota"><span class="order-routine__icon" aria-hidden="true">▤</span><span>Nota</span></button>
-                                    <button class="order-routine" type="button" disabled title="Financeiro será integrado ao módulo de contas e estoque." aria-label="Financeiro — em breve"><span class="order-routine__icon" aria-hidden="true">$</span><span>Financeiro</span><small>Em breve</small></button>
-                                    <button id="fiscal-preview-submit" class="order-routine" type="submit" data-fiscal-action="preview" data-order-action="print" title="Gerar espelho do pedido em uma nova guia" aria-label="Imprimir pedido"><span class="order-routine__icon" aria-hidden="true">▧</span><span>Imprimir Pedido</span></button>
-                                    <?php if($tab==='entrada'): ?><button class="order-routine" type="button" disabled title="Importação de XML estará disponível em breve." aria-label="Importar XML — em breve"><span class="order-routine__icon" aria-hidden="true">⇧</span><span>Importar XML</span><small>Em breve</small></button><?php endif; ?>
-                                    <button class="order-routine" type="button" data-order-new data-new-url="?page=pedidos&amp;tab=<?= urlencode($tab) ?>" title="Iniciar novo pedido" aria-label="Novo pedido"><span class="order-routine__icon" aria-hidden="true">＋</span><span>Nova</span></button>
+                                <div class="order-action-bar" role="toolbar" aria-label="Ações do pedido" data-order-action-bar>
+                                    <div class="order-action-bar__intro"><strong>Ações</strong><span>Pedido</span></div>
+                                    <div class="order-action-bar__buttons">
+                                        <button class="order-routine order-routine--primary" type="submit" name="action" value="save_fiscal_order" data-order-action="save" title="Gravar e mostrar na lista de Pedidos" aria-label="Gravar pedido"><span class="order-routine__icon" aria-hidden="true">✓</span><span data-order-label>Gravar</span></button>
+                                        <button class="order-routine order-routine--fiscal" type="submit" data-fiscal-action="finalize" data-order-action="note" title="Salvar e preparar documento interno na Central de Notas" aria-label="Preparar nota"><span class="order-routine__icon" aria-hidden="true">▤</span><span data-order-label>Preparar Nota</span></button>
+                                        <button id="fiscal-preview-submit" class="order-routine order-routine--preview" type="submit" data-fiscal-action="preview" data-order-action="print" title="Abrir prévia DANFE ou DANFC-e em uma nova guia" aria-label="Gerar prévia fiscal"><span class="order-routine__icon" aria-hidden="true">▧</span><span data-order-label><?= $previewSelectedModel==='65'?'Prévia DANFC-e':'Prévia DANFE' ?></span></button>
+                                        <?php if($canUseOrderTestFill): ?><button class="order-routine order-routine--test" type="button" data-order-test-fill title="Preencher o formulário com dados existentes para teste; não salva automaticamente" aria-label="Preencher dados de teste"><span class="order-routine__icon" aria-hidden="true">⚡</span><span>Preencher teste</span></button><?php endif; ?>
+                                        <span class="order-action-bar__divider" aria-hidden="true"></span>
+                                        <button class="order-routine order-routine--secondary" type="button" data-order-new data-new-url="?page=pedidos&amp;tab=<?= urlencode($tab) ?>" title="Iniciar novo pedido" aria-label="Novo pedido"><span class="order-routine__icon" aria-hidden="true">＋</span><span data-order-label>Novo</span></button>
+                                        <button class="order-routine order-routine--disabled" type="button" disabled title="Financeiro será integrado ao módulo de contas e estoque." aria-label="Financeiro — em breve"><span class="order-routine__icon" aria-hidden="true">$</span><span>Financeiro</span></button>
+                                        <?php if($tab==='entrada'): ?><button class="order-routine order-routine--disabled" type="button" disabled title="Importação de XML estará disponível em breve." aria-label="Importar XML — em breve"><span class="order-routine__icon" aria-hidden="true">⇧</span><span>Importar XML</span></button><?php endif; ?>
+                                    </div>
                                 </div>
                                 <div class="order-action-feedback" role="status" aria-live="polite" hidden></div>
 
@@ -1424,17 +1432,17 @@ if (is_dir($imagesDir)) {
                                 document.querySelector('[data-order-new]')?.addEventListener('click',event=>{if(confirmLeave())location.href=event.currentTarget.dataset.newUrl;});
                                 document.querySelector('[data-order-cancel]')?.addEventListener('click',()=>{if(confirmLeave())location.href='?page=pedidos&tab=emitidos';});
                                 const fiscalModelSelect=document.getElementById('fiscal-model-select');const fiscalPreviewSubmit=document.getElementById('fiscal-preview-submit');
-                                function syncFiscalPreviewLabel(){if(fiscalPreviewSubmit&&fiscalModelSelect)fiscalPreviewSubmit.textContent=fiscalModelSelect.value==='65'?'Prévia DANFC-e':'Prévia DANFE';}
+                                function syncFiscalPreviewLabel(){const label=fiscalPreviewSubmit?.querySelector('[data-order-label]');if(label&&fiscalModelSelect)label.textContent=fiscalModelSelect.value==='65'?'Prévia DANFC-e':'Prévia DANFE';}
                                 fiscalModelSelect?.addEventListener('change',syncFiscalPreviewLabel);syncFiscalPreviewLabel();
                                 form.addEventListener('submit',async event=>{
                                     const submitter=event.submitter;if(!(submitter instanceof HTMLButtonElement))return;
                                     if(submitter.dataset.orderAction==='save'){
                                         if(submitter.dataset.busy==='1'){event.preventDefault();return;}
-                                        submitter.dataset.busy='1';const label=submitter.querySelector('span:last-of-type');if(label)label.textContent='Salvando...';setTimeout(()=>submitter.disabled=true,0);return;
+                                        submitter.dataset.busy='1';const label=submitter.querySelector('[data-order-label]');if(label)label.textContent='Salvando...';submitter.setAttribute('aria-busy','true');setTimeout(()=>submitter.disabled=true,0);return;
                                     }
                                     const fiscalAction=submitter.dataset.fiscalAction;if(!fiscalAction)return;
                                     event.preventDefault();if(submitter.dataset.busy==='1')return;submitter.dataset.busy='1';submitter.disabled=true;
-                                    const label=submitter.querySelector('span:last-of-type');const oldLabel=label?.textContent||'';if(label)label.textContent=fiscalAction==='preview'?'Gerando prévia...':'Preparando nota...';
+                                    const label=submitter.querySelector('[data-order-label]');const oldLabel=label?.textContent||'';if(label)label.textContent=fiscalAction==='preview'?'Gerando prévia...':'Preparando nota...';submitter.setAttribute('aria-busy','true');
                                     let previewWindow=null;if(fiscalAction==='preview'){previewWindow=window.open('','_blank');if(previewWindow)previewWindow.document.write('<!doctype html><meta charset="utf-8"><title>Gerando prévia</title><p style="font:16px sans-serif;padding:30px">Gerando prévia do pedido...</p>');}
                                     const data=new FormData(form);data.set('fiscal_action',fiscalAction);data.set('idempotency_key',form.querySelector('[name="idempotency_key"]')?.value||'');
                                     try{
@@ -1444,7 +1452,7 @@ if (is_dir($imagesDir)) {
                                         if(fiscalAction==='preview'){if(previewWindow&&result.danfe_url)previewWindow.location.href=result.danfe_url;else if(previewWindow)previewWindow.close();return;}
                                         if(previewWindow)previewWindow.close();location.href=result.notes_url||'?page=fiscal_notes';
                                     }catch(error){if(previewWindow){previewWindow.document.body.innerHTML='<p style="font:16px sans-serif;padding:30px">Não foi possível gerar a prévia. Volte ao ERP, revise os dados e tente novamente.</p>';}showError(error.message||'Não foi possível concluir. Os dados foram preservados.');if(error.notesUrl&&fiscalAction!=='preview')location.href=error.notesUrl;}
-                                    finally{submitter.dataset.busy='0';submitter.disabled=false;if(label)label.textContent=oldLabel;}
+                                    finally{submitter.dataset.busy='0';submitter.disabled=false;submitter.removeAttribute('aria-busy');if(label)label.textContent=oldLabel;}
                                 });
                             })();
                             </script>
