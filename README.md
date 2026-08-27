@@ -1,367 +1,288 @@
-# Mini ERP Web
+<p align="center">
+  <img src="mini-erp-web/public/assets/images/mini-erp-logo.png" alt="MiniERP" width="220">
+</p>
 
-## Sobre o projeto
+<h1 align="center">MiniERP 1.0</h1>
 
-O Mini ERP Web é um sistema de gestão empresarial simplificado (ERP), desenvolvido em
-PHP e MySQL, cobrindo os processos essenciais de uma pequena empresa: clientes, produtos,
-estoque, vendas, financeiro e um dashboard com visão geral do negócio.
+<p align="center">
+  ERP web multiempresa desenvolvido em PHP 8.2 e MariaDB, com pedidos comerciais,
+  cadastros unificados e base fiscal para NF-e/NFC-e.
+</p>
 
-## Objetivo
+<p align="center">
+  <img alt="PHP 8.2" src="https://img.shields.io/badge/PHP-8.2-777BB4?logo=php&logoColor=white">
+  <img alt="MariaDB" src="https://img.shields.io/badge/MariaDB-MySQL-003545?logo=mariadb&logoColor=white">
+  <img alt="NF-e" src="https://img.shields.io/badge/NF--e%20%2F%20NFC--e-4.00-1565C0">
+  <img alt="Status" src="https://img.shields.io/badge/status-em%20desenvolvimento-F59E0B">
+</p>
 
-Este é um projeto de portfólio e de aprendizado. Ele existe para praticar, na prática,
-PHP, MySQL, frontend, arquitetura de software, segurança e o desenvolvimento completo de
-um sistema ERP — do banco de dados à interface.
+> [!IMPORTANT]
+> O projeto gera prévias locais de DANFE/DANFC-e sem certificado e sem comunicação
+> com a SEFAZ. Transmissão fiscal real somente deve ser habilitada depois da configuração
+> completa de empresa, série, ambiente, tributação e certificado A1.
+
+## Visão geral
+
+O MiniERP reúne a operação comercial e a preparação fiscal em uma aplicação web responsiva.
+O projeto possui isolamento multi-tenant, persistência transacional e uma separação explícita
+entre salvar um pedido, criar um documento fiscal interno, gerar uma prévia e transmitir à SEFAZ.
+
+### Principais recursos
+
+- autenticação de usuários e contexto seguro de empresa;
+- isolamento de dados por tenant e banco dedicado;
+- cadastro unificado de clientes, fornecedores, transportadoras e motoristas;
+- cadastro de produtos, CFOP e dados tributários;
+- criação e edição de pedidos de entrada e saída;
+- itens, totais, frete, transportadora, veículo, volumes e pesos;
+- listagem operacional de pedidos emitidos;
+- Central de Notas com filtros, estados, detalhes e timeline;
+- prévia DANFE modelo 55 em A4;
+- prévia DANFC-e modelo 65 em formato compacto;
+- XML fiscal armazenado com verificação SHA-256 quando disponível;
+- configuração de estabelecimentos, séries fiscais e certificado A1;
+- testes de integração, isolamento, persistência e fluxos HTTP reais.
+
+## Fluxos importantes
+
+### Salvar pedido
+
+```text
+Novo pedido
+   ↓
+Validação e CSRF
+   ↓
+Pedido + itens + transporte em transação
+   ↓
+COMMIT e leitura de confirmação
+   ↓
+Pedidos Emitidos
+```
+
+Salvar um pedido não emite nota, não reserva número fiscal e não chama a SEFAZ.
+
+### Prévia fiscal
+
+```text
+Pedido ou documento interno
+   ↓
+FiscalDanfePreviewService
+   ↓
+XML técnico completo de prévia
+   ↓
+NFePHP/sped-da
+   ↓
+PDF em nova guia
+```
+
+- Modelo 55: `NFePHP\DA\NFe\Danfe`, papel A4.
+- Modelo 65: `NFePHP\DA\NFe\Danfce`, papel compacto de 80 mm.
+- Certificado A1: não exigido para prévia.
+- SEFAZ: nenhuma chamada durante a prévia.
+
+### Emissão e transmissão
+
+A ação **Emitir / Transmitir** é separada da prévia. Ela permanece bloqueada quando faltar
+certificado A1, série ativa de homologação ou preflight fiscal completo. O estado
+`AUTHORIZED` nunca deve ser criado sem uma resposta real da SEFAZ.
 
 ## Tecnologias
 
-- PHP
-- MySQL
-- PDO
-- HTML
-- CSS
-- JavaScript
-- Bootstrap *(a confirmar se será utilizado)*
-- XAMPP
-- Apache
-- MySQL Workbench
-- VS Code
+| Camada | Tecnologias |
+|---|---|
+| Backend | PHP 8.2, PDO, Composer |
+| Banco | MariaDB / MySQL |
+| Frontend | HTML5, CSS, JavaScript |
+| Fiscal | NFePHP `sped-nfe` e `sped-da` |
+| Segurança | Sessão, CSRF, prepared statements, isolamento por tenant |
+| Ambiente local | Apache e PHP pelo XAMPP |
 
 ## Requisitos
 
-Antes de começar, instale:
+- Windows com XAMPP, ou ambiente equivalente com Apache/PHP;
+- PHP `8.2+`;
+- MariaDB ou MySQL;
+- Composer;
+- extensões PHP `dom`, `json`, `libxml`, `openssl`, `simplexml`, `soap` e `zlib`.
 
-- **XAMPP** — para rodar Apache, PHP e MySQL localmente
-- **MySQL Workbench** — para administrar o banco de dados visualmente
-- **VS Code** — editor de código
-- **Navegador** (Chrome, Firefox, Edge, etc.)
+## Instalação local
 
-## Instalação
+### 1. Clonar o projeto
 
-### 1. Instalar XAMPP
-
-Baixe e instale o XAMPP para o seu sistema operacional em https://www.apachefriends.org.
-Durante a instalação, mantenha ao menos os módulos **Apache** e **MySQL** selecionados.
-
-### 2. Iniciar Apache
-
-Abra o painel de controle do XAMPP e clique em **Start** ao lado de **Apache**.
-Isso liga o servidor web que vai processar os arquivos PHP do projeto.
-
-### 3. Iniciar MySQL
-
-No mesmo painel, clique em **Start** ao lado de **MySQL**.
-Isso liga o servidor de banco de dados.
-
-### 4. Criar o projeto
-
-Coloque a pasta do projeto dentro do diretório `htdocs` do XAMPP:
-
-```
-C:\xampp\htdocs\mini-erp
+```powershell
+cd C:\xampp\htdocs
+git clone https://github.com/WillSPACCE/MiniERP-1.0.git MiniRP
+cd MiniRP\mini-erp-web
 ```
 
-### 5. Criar o banco de dados
+### 2. Instalar dependências
 
-1. Abra o **MySQL Workbench**.
-2. Crie uma nova conexão apontando para o MySQL do XAMPP (host `127.0.0.1`, porta `3306`,
-   usuário padrão `root`, sem senha, salvo se você tiver configurado uma).
-3. Conecte-se e execute o script:
-   ```
-   database/schema.sql
-   ```
-   *(este arquivo ainda será criado quando o banco for modelado)*
-
-### 6. Dados iniciais
-
-Após criar as tabelas, execute o script de dados iniciais (dados de exemplo para testar
-o sistema):
-
-```
-database/seeds.sql
+```powershell
+composer install
 ```
 
-*(este arquivo ainda será criado)*
+### 3. Configurar o banco
 
-### 7. Configuração
+O arquivo `mini-erp-web/config.php` lê as variáveis abaixo e possui padrões adequados ao
+XAMPP local:
 
-O projeto terá um arquivo de configuração de conexão com o banco (host, usuário, senha,
-nome do banco).
+| Variável | Padrão |
+|---|---|
+| `DB_HOST` | `127.0.0.1` |
+| `DB_PORT` | `3306` |
+| `DB_NAME` | `mini_erp` |
+| `DB_USERNAME` | `root` |
+| `DB_PASSWORD` | vazio |
+| `APP_TIMEZONE` | `America/Sao_Paulo` |
 
-**IMPORTANTE:** Nunca colocar senha real ou segredo no Git. Utilizar um arquivo de exemplo
-(ex.: `config.example.php`) versionado, e um arquivo real (ex.: `config.php`) ignorado
-pelo `.gitignore`.
+Crie o banco principal e aplique somente as migrations compatíveis com o estado atual.
+Antes de qualquer migration em banco existente, faça um dump completo. O catálogo está em
+[`mini-erp-web/migrations`](mini-erp-web/migrations).
 
-## Como executar
+> [!WARNING]
+> Não execute todas as migrations cegamente em uma base já utilizada. Algumas representam
+> etapas históricas e exigem conferência de dependências e versão do schema.
 
-1. Abrir o XAMPP
-2. Iniciar o Apache
-3. Iniciar o MySQL
-4. Abrir o navegador
-5. Acessar `localhost`
-6. Acessar o Mini ERP em `http://localhost/mini-erp`
+### 4. Iniciar a aplicação
 
-## Como testar
+Opção A — Apache do XAMPP:
 
-*(a detalhar conforme os testes forem criados na pasta `tests/`)*
+1. Inicie Apache e MySQL no painel do XAMPP.
+2. Acesse `http://localhost/MiniRP/mini-erp-web/public/`.
 
-De forma geral, cada funcionalidade deve ser testada:
+Opção B — servidor PHP embutido:
 
-- pelo navegador, testando o fluxo real da tela
-- validando que os dados aparecem corretamente no MySQL Workbench após cada ação
-
-## Estrutura do projeto
-
-```
-app/
-config/
-controllers/
-models/
-services/
-views/
-helpers/
-middleware/
-
-public/
-assets/
-
-database/
-
-tests/
+```powershell
+cd C:\xampp\htdocs\MiniRP\mini-erp-web
+C:\xampp\php\php.exe -S 127.0.0.1:8000 -t public
 ```
 
-- **app/** — responsável pela lógica da aplicação.
-- **controllers/** — recebem requisições e coordenam as operações.
-- **models/** — responsáveis pela comunicação com os dados quando aplicável.
-- **services/** — contêm as regras de negócio.
-- **views/** — interface (telas) do sistema.
-- **config/** — configurações (banco, ambiente, etc.).
-- **public/** — arquivos públicos (ponto de entrada, assets acessíveis pelo navegador).
-- **database/** — scripts SQL (schema, seeds, migrações).
-- **tests/** — testes do sistema.
+Depois acesse `http://127.0.0.1:8000/`.
 
-## Banco de dados
+## Como usar
 
-Para visualizar e explorar o banco usando o **MySQL Workbench**:
+### Cadastros
 
-- **Abrir tabela:** na aba Navigator, expanda o schema `mini_erp` (ou nome equivalente) →
-  `Tables`, clique com o botão direito na tabela → *Select Rows - Limit 1000*.
-- **Visualizar registros:** o resultado aparece em uma grid editável na área central.
-- **Executar SELECT:** abra uma nova aba de SQL (`Ctrl+T`) e escreva a consulta.
-- **INSERT/UPDATE:** podem ser feitos via SQL ou diretamente na grid de resultados
-  (clicando duas vezes na célula).
-- **JOIN:** usado para combinar dados de duas ou mais tabelas relacionadas.
+1. Entre na empresa correta.
+2. Acesse **Cadastros → Pessoas** para clientes, fornecedores, transportadoras e motoristas.
+3. Cadastre produtos com NCM e informações tributárias.
+4. Configure CFOPs coerentes com entrada ou saída.
 
-## Primeiros comandos SQL
+### Pedido de venda
 
-```sql
--- Listar todos os clientes
-SELECT * FROM clientes;
+1. Acesse **Pedidos → Saída → Novo pedido de venda**.
+2. Selecione cliente, natureza/CFOP e modelo 55 ou 65.
+3. Adicione produtos, quantidades e preços.
+4. Preencha frete e transporte quando aplicável.
+5. Clique em **Gravar**.
+6. O pedido será exibido em **Pedidos Emitidos**.
 
--- Buscar um cliente pelo id
-SELECT * FROM clientes WHERE id = 1;
+### Prévia DANFE/DANFC-e
 
--- Inserir um novo cliente
-INSERT INTO clientes (nome, email) VALUES ('João Silva', 'joao@email.com');
+1. Abra **Pedidos Emitidos** ou a **Central de Notas**.
+2. Abra o menu **Ações**.
+3. Clique em **Prévia DANFE** ou **Prévia DANFC-e**.
+4. O PDF será aberto em nova guia e a tela atual permanecerá aberta.
 
--- Atualizar um cliente
-UPDATE clientes SET email = 'novo@email.com' WHERE id = 1;
+### Central de Notas
 
--- Relacionar vendas com clientes
-SELECT vendas.id, clientes.nome
-FROM vendas
-JOIN clientes ON vendas.cliente_id = clientes.id;
+O menu respeita a disponibilidade de cada documento:
+
+1. Prévia DANFE/DANFC-e;
+2. visualizar e baixar XML, quando existir artifact;
+3. Emitir/Transmitir, sujeito ao preflight e certificado;
+4. tentar novamente;
+5. timeline/eventos;
+6. copiar chave, quando houver chave válida.
+
+## Testes
+
+Execute os testes a partir de `mini-erp-web`:
+
+```powershell
+C:\xampp\php\php.exe tests\FiscalXmlBuilderTest.php
+C:\xampp\php\php.exe tests\FiscalDanfePreviewEndpointStaticTest.php
+C:\xampp\php\php.exe tests\TenantIsolationTest.php
 ```
 
-*(exemplos ilustrativos — serão ajustados conforme as tabelas reais forem criadas)*
+O teste HTTP cria registros `TEST_ONLY`, percorre o fluxo real e remove os dados criados:
 
-## Como estudar o projeto
-
-Para aprender de verdade com este projeto, siga este ciclo em cada funcionalidade:
-
-1. Ler o código
-2. Executar e ver funcionando
-3. Modificar algo pequeno
-4. Quebrar de propósito (ver o erro acontecer)
-5. Corrigir o erro
-6. Testar novamente
-7. Explicar com suas próprias palavras o que o código faz
-
-## Fluxo da aplicação
-
-```
-Navegador
-   ↓
-Apache
-   ↓
-PHP
-   ↓
-Controller
-   ↓
-Service
-   ↓
-Model / Database
-   ↓
-MySQL
-   ↓
-Resposta
-   ↓
-Navegador
+```powershell
+$env:RUN_ORDER_HTTP_TESTS='1'
+C:\xampp\php\php.exe tests\OrderCrudHttpTest.php
+Remove-Item Env:RUN_ORDER_HTTP_TESTS
 ```
 
-## Fluxos do ERP
+Ele requer Apache e MariaDB ativos, além das fixtures esperadas no tenant de teste.
 
+## Estrutura
+
+```text
+MiniRP/
+├── README.md
+└── mini-erp-web/
+    ├── app/            # compatibilidade e acesso legado
+    ├── database/       # templates de schema
+    ├── docs/           # documentação técnica e operacional
+    ├── migrations/     # evolução versionada do banco
+    ├── public/         # entrypoints HTTP e assets
+    ├── src/            # domínio, serviços, repositórios e infraestrutura
+    ├── tests/          # testes unitários, integração e HTTP
+    ├── composer.json
+    └── config.php
 ```
-Cliente
-   ↓
-Venda
-   ↓
-Itens
-   ↓
-Estoque
-   ↓
-Financeiro
+
+## Segurança e dados locais
+
+Nunca envie para o Git:
+
+- `.env` e credenciais reais;
+- certificados `.pfx` ou `.p12`;
+- master keys e secrets fiscais;
+- dumps SQL de clientes;
+- sessões, cookies, logs, cache, PDFs ou XMLs operacionais;
+- conteúdo de `storage`, `tmp`, `output` ou `backups`.
+
+Os endpoints fiscais resolvem o tenant pela sessão autenticada. IDs de pedido, documento e
+artifact são revalidados no banco do tenant para reduzir risco de IDOR.
+
+## Estado do projeto
+
+| Área | Estado |
+|---|---|
+| Autenticação e multi-tenant | Implementado |
+| Pessoas e produtos | Implementado |
+| Pedidos de entrada/saída | Implementado |
+| Pedidos Emitidos | Implementado |
+| Central de Notas | Implementado |
+| Prévia DANFE 55 | Implementado |
+| Prévia DANFC-e 65 | Implementado |
+| XML e integridade SHA-256 | Implementado quando há artifact |
+| Transmissão SEFAZ | Protegida / não presumir habilitada |
+| Financeiro completo | Em evolução |
+
+## Backup e recuperação do código
+
+O snapshot funcional está preservado na branch:
+
+```text
+backup/functional-prompt-081-2026-08-27
 ```
 
-## Segurança
+Para abrir esse snapshot sem sobrescrever trabalho atual:
 
-Medidas de segurança planejadas/implementadas no projeto:
+```powershell
+git fetch origin
+git switch -c recuperacao-081 origin/backup/functional-prompt-081-2026-08-27
+```
 
-- PDO com Prepared Statements (proteção contra SQL Injection)
-- `password_hash` / `password_verify` para senhas de usuários
-- Proteção CSRF em formulários
-- Validação de dados de entrada
-- Controle de autorização (permissões por tipo de usuário)
-- Gerenciamento seguro de sessão
+## Licença
 
-*(esta seção será atualizada com o que for de fato implementado)*
-
-## Funcionalidades
-
-- [ ] Login
-- [ ] Logout
-- [ ] Usuários
-- [ ] Permissões
-- [ ] Clientes
-- [ ] Categorias
-- [ ] Produtos
-- [ ] Estoque
-- [ ] Vendas
-- [ ] Financeiro
-- [ ] Dashboard
-- [ ] Relatórios
-
-## Roadmap
-
-1. Documentação inicial (memória técnica, memória visual, README) — **concluído**
-2. Estrutura de pastas do código
-3. Modelagem e criação do banco de dados
-4. Autenticação (login/logout)
-5. CRUDs base (clientes, produtos, categorias)
-6. Estoque
-7. Vendas
-8. Financeiro
-9. Dashboard
-10. Relatórios
-
-## Como contribuir
-
-Ao alterar o projeto (mesmo sendo um projeto solo de estudo):
-
-1. Ler `docs/memory.md` e `docs/visual-memory.md` antes de começar.
-2. Seguir os padrões de código e visuais já definidos.
-3. Não duplicar componentes ou lógica já existente.
-4. Atualizar a documentação relevante ao concluir a mudança.
-
-## Como criar uma nova funcionalidade
-
-1. Entender o requisito
-2. Analisar o banco de dados (tabelas existentes e necessárias)
-3. Definir a regra de negócio
-4. Implementar o backend
-5. Implementar o frontend
-6. Testar
-7. Revisar segurança
-8. Documentar
-9. Atualizar `docs/memory.md` (e `docs/visual-memory.md` se houve mudança visual)
-
-## Como explicar o projeto em uma entrevista
-
-**P: Do que se trata o projeto?**
-R: É um Mini ERP Web feito em PHP e MySQL, com módulos de clientes, produtos, estoque,
-vendas e financeiro, criado para praticar arquitetura de sistemas e boas práticas de
-desenvolvimento backend e frontend.
-
-**P: Como você organizou a arquitetura?**
-R: Em camadas — controllers recebem a requisição, services concentram as regras de
-negócio, e models cuidam do acesso aos dados via PDO, mantendo cada responsabilidade
-separada.
-
-**P: Como você garantiu a segurança da aplicação?**
-R: Usando PDO com Prepared Statements para evitar SQL Injection, hash de senhas com
-`password_hash`, proteção CSRF nos formulários e validação de dados de entrada.
-
-**P: Qual foi o maior desafio?**
-R: *(responder com base na experiência real conforme o projeto avançar)*
+O `composer.json` identifica o projeto como proprietário. Consulte o autor antes de
+redistribuir, sublicenciar ou utilizar comercialmente.
 
 ---
 
-## Comentários no código
-
-Como este projeto é para aprendizado, todo código criado deve ter comentários
-explicativos que ensinem, não apenas descrevam.
-
-Para cada função importante, explicar:
-
-- o que a função faz
-- quais parâmetros recebe
-- o que retorna
-- por que existe
-- quando é utilizada
-
-Exemplo (PHPDoc):
-
-```php
-/**
- * Busca um cliente pelo ID.
- *
- * Esta função consulta o banco de dados utilizando PDO
- * e Prepared Statement.
- *
- * @param int $id ID do cliente.
- * @return array|null Retorna os dados do cliente ou null caso não seja encontrado.
- */
-```
-
-Outro exemplo, para autenticação:
-
-```php
-/**
- * Autentica um usuário utilizando email e senha.
- *
- * O sistema busca o usuário pelo email usando Prepared Statement
- * e depois verifica a senha através de password_verify().
- *
- * @param string $email
- * @param string $password
- * @return array|null
- */
-```
-
-Para SQL importante, explicar o objetivo da consulta:
-
-```sql
--- Busca apenas produtos ativos
--- cujo estoque está abaixo do estoque mínimo.
-SELECT * FROM produtos WHERE ativo = 1 AND estoque < estoque_minimo;
-```
-
-Não é necessário comentar cada linha (evitar comentários óbvios, como `// soma 1 com 1`).
-O foco é explicar funções, classes, métodos, regras de negócio, consultas SQL importantes
-e decisões que possam gerar dúvida.
-
-### Regra de ensino ao criar código novo
-
-- **Antes:** explicar o conceito envolvido.
-- **Durante:** explicar o que o código está fazendo.
-- **Depois:** explicar como testar.
-- **Em seguida:** explicar como você poderia alterar aquele código sozinho.
+<p align="center">
+  Desenvolvido por <a href="https://github.com/WillSPACCE">WillSPACCE</a>.
+</p>

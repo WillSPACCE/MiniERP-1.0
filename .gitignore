@@ -34,6 +34,19 @@ mini-erp-web/scripts/dump_admin.php
 *.sqlite3
 *.db
 
+# Artefatos locais e operacionais
+.rnd
+backups/
+mini-erp-web/storage/
+mini-erp-web/tmp/
+mini-erp-web/output/
+mini-erp-web/debug*.php
+mini-erp-web/tmp_debug*.php
+*.pfx
+*.p12
+*.pem
+*.key
+
 # Credenciais/configuração local
 .env
 .env.*
