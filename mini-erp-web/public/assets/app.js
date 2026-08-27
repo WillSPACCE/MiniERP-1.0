@@ -699,6 +699,72 @@ document.addEventListener('DOMContentLoaded', function () {
 
 })();
 
+// Gráficos responsivos do Dashboard com escala linear real e tooltips em pt-BR.
+(() => {
+    if (typeof window.Chart === 'undefined') return;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+    const rootStyle = getComputedStyle(document.documentElement);
+    const textColor = rootStyle.getPropertyValue('--text').trim() || '#172033';
+    const mutedColor = rootStyle.getPropertyValue('--muted').trim() || '#667085';
+    const borderColor = rootStyle.getPropertyValue('--border').trim() || '#dce3ef';
+
+    document.querySelectorAll('canvas.dashboard-chart[data-chart]').forEach(canvas => {
+        let payload;
+        try { payload = JSON.parse(canvas.dataset.chart || '{}'); } catch (_) { return; }
+        const isMoney = payload.type === 'money';
+        const context = canvas.getContext('2d');
+        const gradient = context.createLinearGradient(0, 0, 0, 360);
+        gradient.addColorStop(0, isMoney ? '#3b82f6' : '#22c98a');
+        gradient.addColorStop(1, isMoney ? '#2457d6' : '#12845d');
+
+        new window.Chart(context, {
+            type: 'bar',
+            data: {
+                labels: payload.labels || [],
+                datasets: [{
+                    label: payload.label || '',
+                    data: payload.values || [],
+                    backgroundColor: gradient,
+                    borderColor: isMoney ? '#2457d6' : '#12845d',
+                    borderWidth: 1,
+                    borderRadius: 7,
+                    borderSkipped: false,
+                    maxBarThickness: 42
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: reduced ? false : { duration: 380, easing: 'easeOutQuart' },
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        displayColors: false,
+                        padding: 12,
+                        callbacks: {
+                            title: items => items[0]?.label || '',
+                            label: item => isMoney ? `Faturamento: ${money.format(item.raw || 0)}` : `Quantidade: ${item.raw || 0}`,
+                            afterLabel: item => isMoney && Array.isArray(payload.counts) ? `Vendas: ${payload.counts[item.dataIndex] || 0}` : ''
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { color: mutedColor, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
+                    y: {
+                        beginAtZero: true,
+                        grace: '12%',
+                        grid: { color: borderColor },
+                        ticks: { color: mutedColor, precision: 0, callback: value => isMoney ? money.format(value) : value }
+                    }
+                }
+            }
+        });
+        canvas.style.color = textColor;
+    });
+})();
+
 // A Central de Notas reutiliza o preview seguro do pedido e mantém a Central aberta.
 document.querySelectorAll('.notes-table tbody tr').forEach(function (row) {
     const orderText = row.querySelector('td small')?.textContent || '';

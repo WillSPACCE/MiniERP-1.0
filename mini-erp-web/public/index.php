@@ -11,6 +11,7 @@ require_once __DIR__ . '/../src/Fiscal/TaxRuleResolver.php';
 require_once __DIR__ . '/../src/Repositories/MariaDbTaxRuleRepository.php';
 require_once __DIR__ . '/../src/Repositories/FiscalOperationRepository.php';
 require_once __DIR__ . '/../src/Repositories/IssuedOrdersRepository.php';
+require_once __DIR__ . '/../src/Repositories/DashboardRepository.php';
 require_once __DIR__ . '/../src/Repositories/MasterDataDirectoryRepository.php';
 require_once __DIR__ . '/../src/Repositories/FiscalDocumentEventRepository.php';
 require_once __DIR__ . '/../src/Services/CreateInternalFiscalDocumentService.php';
@@ -686,7 +687,19 @@ if ($page !== 'login' && !$currentUser) {
     exit;
 }
 
-$dashboard = $repo->getDashboardData();
+$dashboardToday=new DateTimeImmutable('today',new DateTimeZone('America/Sao_Paulo'));
+$validDashboardDate=static fn(string$value):bool=>preg_match('/^\d{4}-\d{2}-\d{2}$/',$value)===1;
+$dashboardFrom=(string)($_GET['from']??$dashboardToday->modify('-29 days')->format('Y-m-d'));
+$dashboardTo=(string)($_GET['to']??$dashboardToday->format('Y-m-d'));
+if(!$validDashboardDate($dashboardFrom)||!$validDashboardDate($dashboardTo)||$dashboardFrom>$dashboardTo){$dashboardFrom=$dashboardToday->modify('-29 days')->format('Y-m-d');$dashboardTo=$dashboardToday->format('Y-m-d');}
+$dashboardFilters=['from'=>$dashboardFrom,'to'=>$dashboardTo,'customer_id'=>max(0,(int)($_GET['customer_id']??0)),'model'=>in_array((string)($_GET['model']??''),['55','65'],true)?(string)$_GET['model']:'','status'=>in_array((string)($_GET['status']??''),['pending','rejected','authorized','preparing'],true)?(string)$_GET['status']:''];
+$dashboardRepository = new \MiniErp\Repositories\DashboardRepository(
+    Database::getConnection(),
+    (int)($_SESSION['erp_tenant_id'] ?? $_SESSION['tenant_id'] ?? 0),
+    new DateTimeZone('America/Sao_Paulo')
+);
+$dashboard = $dashboardRepository->analytics($dashboardFilters);
+$dashboardCustomers=$dashboardRepository->customerOptions();
 $clientes = $repo->listClientes((string) ($_GET['q'] ?? ''));
 $produtos = $repo->listProdutos();
 $vendas = $repo->listVendas();
@@ -2921,95 +2934,39 @@ if (is_dir($imagesDir)) {
                     break;
 
                 default:
+                    $dashboardTab=in_array((string)($_GET['tab']??'overview'),['overview','sales','notes','customers','stock'],true)?(string)($_GET['tab']??'overview'):'overview';
+                    $dashboardQuery=static function(array$replace=[])use($dashboardFilters):string{$query=['page'=>'dashboard','tab'=>'overview',...$dashboardFilters,...$replace];foreach($query as$key=>$value)if($value===''||$value===0)unset($query[$key]);return'?'.http_build_query($query);};
+                    $renderMoneyChart=static function(array$days,string$label):string{$payload=['type'=>'money','label'=>$label,'labels'=>array_column($days,'label'),'values'=>array_map(static fn(array$day):float=>(float)$day['revenue'],$days),'counts'=>array_map(static fn(array$day):int=>(int)$day['count'],$days)];return'<div class="dashboard-chart-frame"><canvas class="dashboard-chart" data-chart="'.htmlspecialchars(json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),ENT_QUOTES,'UTF-8').'" role="img" aria-label="'.htmlspecialchars($label,ENT_QUOTES,'UTF-8').'"></canvas></div>';};
+                    $renderCountChart=static function(array$days,string$key,string$label):string{$payload=['type'=>'count','label'=>$label,'labels'=>array_column($days,'label'),'values'=>array_map(static fn(array$day):int=>(int)$day[$key],$days)];return'<div class="dashboard-chart-frame"><canvas class="dashboard-chart" data-chart="'.htmlspecialchars(json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),ENT_QUOTES,'UTF-8').'" role="img" aria-label="'.htmlspecialchars($label,ENT_QUOTES,'UTF-8').'"></canvas></div>';};
+                    $preset=static fn(int$days):string=>$dashboardQuery(['from'=>$dashboardToday->modify('-'.($days-1).' days')->format('Y-m-d'),'to'=>$dashboardToday->format('Y-m-d'),'tab'=>$dashboardTab]);
                     ?>
-                    <!-- Dashboard principal com visão geral do negócio -->
-                    <section class="page-header">
-                        <div>
-                            <p class="eyebrow">Resumo geral</p>
-                            <h2>Dashboard</h2>
-                        </div>
-                    </section>
+                    <section class="page-header dashboard-heading"><div><p class="eyebrow">Inteligência operacional</p><h2>Dashboard analítico</h2><p>Vendas, notas, clientes e estoque com fontes separadas e filtros por período.</p></div></section>
+                    <form class="dashboard-filters panel" method="get"><input type="hidden" name="page" value="dashboard"><input type="hidden" name="tab" value="<?=htmlspecialchars($dashboardTab)?>"><label>Data inicial<input type="date" name="from" value="<?=htmlspecialchars($dashboardFilters['from'])?>"></label><label>Data final<input type="date" name="to" value="<?=htmlspecialchars($dashboardFilters['to'])?>"></label><label>Cliente<select name="customer_id"><option value="0">Todos os clientes</option><?php foreach($dashboardCustomers as$customer):?><option value="<?=(int)$customer['id']?>"<?=$dashboardFilters['customer_id']===(int)$customer['id']?' selected':''?>><?=htmlspecialchars($customer['nome'])?></option><?php endforeach?></select></label><label>Modelo<select name="model"><option value="">Todos</option><option value="55"<?=$dashboardFilters['model']==='55'?' selected':''?>>55 — NF-e</option><option value="65"<?=$dashboardFilters['model']==='65'?' selected':''?>>65 — NFC-e</option></select></label><?php if($dashboardTab==='notes'):?><label>Status<select name="status"><option value="">Todos</option><?php foreach(['pending'=>'Pendentes','rejected'=>'Rejeitadas','authorized'=>'Autorizadas','preparing'=>'Em preparação']as$value=>$label):?><option value="<?=$value?>"<?=$dashboardFilters['status']===$value?' selected':''?>><?=$label?></option><?php endforeach?></select></label><?php endif?><div class="dashboard-filter-actions"><button class="btn" type="submit">Aplicar filtros</button><a class="btn secondary" href="?page=dashboard&amp;tab=<?=urlencode($dashboardTab)?>">Limpar filtros</a></div><div class="dashboard-presets"><span>Atalhos:</span><a href="<?=$preset(1)?>">Hoje</a><a href="<?=$preset(7)?>">7 dias</a><a href="<?=$preset(30)?>">30 dias</a><a href="<?=$dashboardQuery(['from'=>$dashboardToday->modify('first day of this month')->format('Y-m-d'),'to'=>$dashboardToday->format('Y-m-d'),'tab'=>$dashboardTab])?>">Este mês</a></div></form>
+                    <nav class="dashboard-tabs" aria-label="Seções do Dashboard"><?php foreach(['overview'=>'Visão geral','sales'=>'Vendas','notes'=>'Notas','customers'=>'Clientes','stock'=>'Estoque']as$value=>$label):?><a class="<?=$dashboardTab===$value?'active':''?>" href="<?=$dashboardQuery(['tab'=>$value])?>" aria-current="<?=$dashboardTab===$value?'page':'false'?>"><?=$label?></a><?php endforeach?></nav>
 
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <span>Clientes</span>
-                            <strong><?= (int) $dashboard['clientes'] ?></strong>
-                        </div>
-                        <div class="stat-card">
-                            <span>Produtos</span>
-                            <strong><?= (int) $dashboard['produtos'] ?></strong>
-                        </div>
-                        <div class="stat-card">
-                            <span>Vendas</span>
-                            <strong><?= (int) $dashboard['vendas'] ?></strong>
-                        </div>
-                        <div class="stat-card warning">
-                            <span>Faturamento</span>
-                            <strong><?= formatCurrency((float) $dashboard['faturamento']) ?></strong>
-                        </div>
-                    </div>
-
+                    <?php if($dashboardTab==='overview'):$overviewDays=array_slice($dashboard['sales_by_day'],-7);?>
+                        <div class="stats-grid analytics-stats"><div class="stat-card"><span>Clientes</span><strong><?=(int)$dashboard['clientes']?></strong></div><div class="stat-card"><span>Produtos</span><strong><?=(int)$dashboard['produtos']?></strong></div><div class="stat-card"><span>Vendas</span><strong><?=(int)$dashboard['vendas']?></strong></div><div class="stat-card warning"><span>Faturamento</span><strong><?=formatCurrency((float)$dashboard['faturamento'])?></strong></div><div class="stat-card"><span>Ticket médio</span><strong><?=formatCurrency((float)$dashboard['ticket_average'])?></strong></div></div>
+                        <div class="panel sales-panel"><div class="sales-header"><div><p class="eyebrow">Faturamento comercial</p><h3>Últimos 7 dias do período</h3></div><span class="sales-total-label">Total: <?=formatCurrency((float)array_sum(array_column($overviewDays,'revenue')))?></span></div><?=$renderMoneyChart($overviewDays,'Faturamento dos últimos sete dias')?></div>
+                        <div class="panel"><h3>Alertas de estoque</h3><p>Produtos ativos abaixo do estoque mínimo: <?=(int)$dashboard['estoque_baixo']?></p><?php foreach($dashboard['low_stock_products']as$product):?><div class="stock-row"><span><?=htmlspecialchars($product['nome'])?></span><strong><?=htmlspecialchars((string)$product['estoque_atual'])?> <?=htmlspecialchars((string)($product['unidade']?:'UN'))?> · mínimo <?=htmlspecialchars((string)$product['minimum_stock'])?></strong></div><?php endforeach?></div>
+                    <?php elseif($dashboardTab==='sales'):?>
+                        <div class="stats-grid"><div class="stat-card warning"><span>Total vendido</span><strong><?=formatCurrency((float)$dashboard['faturamento'])?></strong></div><div class="stat-card"><span>Quantidade de pedidos</span><strong><?=(int)$dashboard['vendas']?></strong></div><div class="stat-card"><span>Ticket médio</span><strong><?=formatCurrency((float)$dashboard['ticket_average'])?></strong></div><div class="stat-card"><span>Maior venda</span><strong><?=formatCurrency((float)$dashboard['largest_sale'])?></strong></div></div>
+                        <div class="analytics-grid"><div class="panel sales-panel"><div class="sales-header"><h3>Faturamento por dia</h3></div><?=$renderMoneyChart($dashboard['sales_by_day'],'Faturamento por dia')?></div><div class="panel sales-panel"><div class="sales-header"><h3>Pedidos por dia</h3></div><?=$renderCountChart($dashboard['sales_by_day'],'count','Pedidos por dia')?></div></div>
+                        <div class="analytics-grid"><div class="panel analytics-table"><h3>Produtos mais vendidos</h3><table><thead><tr><th>Produto</th><th>Quantidade</th><th>Faturamento</th></tr></thead><tbody><?php foreach($dashboard['top_products']as$row):?><tr><td><?=htmlspecialchars($row['nome'])?></td><td><?=htmlspecialchars((string)$row['quantity'])?> <?=htmlspecialchars((string)$row['unidade'])?></td><td><?=formatCurrency((float)$row['revenue'])?></td></tr><?php endforeach?></tbody></table></div><div class="panel analytics-table"><h3>Últimos itens vendidos</h3><table><thead><tr><th>Data</th><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Qtd.</th><th>Unitário</th><th>Total</th></tr></thead><tbody><?php foreach($dashboard['last_sold_items']as$row):?><tr><td><?=htmlspecialchars(date('d/m/Y',strtotime($row['operation_date'])))?></td><td>#<?=(int)$row['order_id']?></td><td><?=htmlspecialchars($row['customer_name'])?></td><td><?=htmlspecialchars($row['product_name'])?></td><td><?=htmlspecialchars((string)$row['quantity'])?></td><td><?=formatCurrency((float)$row['unit_price'])?></td><td><?=formatCurrency((float)$row['net_total'])?></td></tr><?php endforeach?></tbody></table></div></div>
+                    <?php elseif($dashboardTab==='notes'):$notes=$dashboard['notes'];?>
+                        <div class="stats-grid"><div class="stat-card"><span>Notas geradas</span><strong><?=(int)$notes['total']?></strong></div><div class="stat-card"><span>Pendentes</span><strong><?=(int)$notes['pending']?></strong></div><div class="stat-card"><span>Rejeitadas</span><strong><?=(int)$notes['rejected']?></strong></div><div class="stat-card"><span>Autorizadas</span><strong><?=(int)$notes['authorized']?></strong></div><div class="stat-card warning"><span>Valor fiscal autorizado</span><strong><?=formatCurrency((float)$notes['fiscal_total'])?></strong></div></div>
+                        <div class="analytics-grid"><div class="panel analytics-status"><h3>Notas por status</h3><?php $statusMax=max(1,...array_values($notes['by_status']));foreach($notes['by_status']as$label=>$value):?><div class="analytics-progress" title="<?=htmlspecialchars($label)?>: <?=(int)$value?>"><span><?=htmlspecialchars($label)?></span><div><i data-width="<?=number_format($value/$statusMax*100,2,'.','')?>"></i></div><strong><?=(int)$value?></strong></div><?php endforeach?></div><div class="panel sales-panel"><h3>Notas por dia</h3><?=$renderCountChart($notes['by_day'],'count','Notas por dia')?></div></div><div class="panel"><h3>Divisão por modelo</h3><div class="model-split"><span>NF-e 55 <strong><?=(int)$notes['by_model']['55']?></strong></span><span>NFC-e 65 <strong><?=(int)$notes['by_model']['65']?></strong></span></div></div>
+                    <?php elseif($dashboardTab==='customers'):$best=$dashboard['best_customer'];?>
+                        <div class="stats-grid"><div class="stat-card stat-card--wide"><span>Maior cliente do período</span><strong><?=htmlspecialchars((string)($best['customer_name']??'Sem vendas'))?></strong><small><?=formatCurrency((float)($best['revenue']??0))?> em <?=(int)($best['orders_count']??0)?> pedido(s)</small></div></div><div class="panel analytics-table"><h3>Top 10 clientes por faturamento</h3><table><thead><tr><th>Cliente</th><th>Pedidos</th><th>Itens</th><th>Faturamento</th><th>Ticket médio</th></tr></thead><tbody><?php foreach($dashboard['top_customers']as$row):?><tr><td><?=htmlspecialchars($row['customer_name'])?></td><td><?=(int)$row['orders_count']?></td><td><?=htmlspecialchars((string)$row['items_count'])?></td><td><?=formatCurrency((float)$row['revenue'])?></td><td><?=formatCurrency((float)$row['average_ticket'])?></td></tr><?php endforeach?></tbody></table></div>
+                    <?php else:$movement=$dashboard['stock']['movement'];?>
+                        <div class="stats-grid"><div class="stat-card"><span>Estoque baixo</span><strong><?=(int)$dashboard['estoque_baixo']?></strong></div><div class="stat-card"><span>Itens vendidos no período</span><strong><?=htmlspecialchars((string)$dashboard['stock']['sold_quantity'])?></strong></div><div class="stat-card"><span>Movimentações de saída registradas</span><strong><?=$movement['available']?'Disponível':'Sem ledger'?></strong></div></div><div class="message warning"><?=htmlspecialchars($movement['note'])?> As quantidades abaixo representam itens vendidos, não baixa comprovada de estoque.</div><div class="analytics-grid"><div class="panel analytics-table"><h3>Mais vendidos</h3><table><thead><tr><th>Produto</th><th>Quantidade vendida</th><th>Faturamento</th></tr></thead><tbody><?php foreach($dashboard['top_products']as$row):?><tr><td><?=htmlspecialchars($row['nome'])?></td><td><?=htmlspecialchars((string)$row['quantity'])?> <?=htmlspecialchars((string)$row['unidade'])?></td><td><?=formatCurrency((float)$row['revenue'])?></td></tr><?php endforeach?></tbody></table></div><div class="panel analytics-table"><h3>Estoque baixo</h3><table><thead><tr><th>Produto</th><th>Atual</th><th>Mínimo</th><th>Diferença</th></tr></thead><tbody><?php foreach($dashboard['low_stock_products']as$row):?><tr><td><?=htmlspecialchars($row['nome'])?></td><td><?=htmlspecialchars((string)$row['estoque_atual'])?> <?=htmlspecialchars((string)$row['unidade'])?></td><td><?=htmlspecialchars((string)$row['minimum_stock'])?></td><td><?=htmlspecialchars((string)((float)$row['estoque_atual']-(float)$row['minimum_stock']))?></td></tr><?php endforeach?></tbody></table></div></div><div class="panel analytics-table"><h3>Últimos itens vendidos</h3><table><thead><tr><th>Data</th><th>Produto</th><th>Pedido</th><th>Cliente</th><th>Quantidade</th><th>Estoque atual</th></tr></thead><tbody><?php foreach($dashboard['last_sold_items']as$row):?><tr><td><?=htmlspecialchars(date('d/m/Y',strtotime($row['operation_date'])))?></td><td><?=htmlspecialchars($row['product_name'])?></td><td>#<?=(int)$row['order_id']?></td><td><?=htmlspecialchars($row['customer_name'])?></td><td><?=htmlspecialchars((string)$row['quantity'])?></td><td><?=htmlspecialchars((string)$row['estoque_atual'])?> <?=htmlspecialchars((string)$row['unidade'])?></td></tr><?php endforeach?></tbody></table></div>
                     <?php
-                    $salesChartDays = [];
-                    $chartMax = 0;
-                    $chartData = [];
-                    $now = new DateTimeImmutable('today');
-                    foreach (range(6, 0) as $dayOffset) {
-                        $date = $now->modify('-' . $dayOffset . ' days')->format('Y-m-d');
-                        $dayTotal = 0.0;
-                        foreach ($vendas as $v) {
-                            if (!empty($v['data_venda']) && date('Y-m-d', strtotime((string)$v['data_venda'])) === $date) {
-                                $dayTotal += (float) ($v['total'] ?? 0);
-                            }
-                        }
-                        $chartData[] = [
-                            'label' => date('d', strtotime($date)),
-                            'shortLabel' => date('d', strtotime($date)),
-                            'value' => $dayTotal,
-                            'date' => $date,
-                        ];
-                        $chartMax = max($chartMax, $dayTotal);
-                    }
-                    $chartMax = $chartMax > 0 ? $chartMax : 1;
-                    ?>
-
-                    <div class="panel sales-panel">
-                        <div class="sales-header">
-                            <div>
-                                <p class="eyebrow">Vendas por data</p>
-                                <h3>Últimos 7 dias</h3>
-                            </div>
-                            <span class="sales-total-label">Total: <?= formatCurrency((float) array_sum(array_map(static fn ($item) => $item['value'], $chartData))) ?></span>
-                        </div>
-                        <div class="sales-chart" aria-label="Gráfico de vendas por data">
-                            <?php foreach ($chartData as $item): ?>
-                                <div class="sales-column" title="<?= htmlspecialchars($item['date']) ?>: <?= formatCurrency((float) $item['value']) ?>">
-                                    <span class="sales-value"><?= formatCurrency((float) $item['value']) ?></span>
-                                    <span class="sales-bar" data-percent="<?= max(10, (float) $item['value'] / $chartMax * 100) ?>"></span>
-                                    <span class="sales-day"><?= htmlspecialchars($item['shortLabel']) ?></span>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    </div>
-
-                    <div class="panel">
-                        <h3>Alertas de estoque</h3>
-                        <p>Produtos com estoque baixo: <?= (int) $dashboard['estoque_baixo'] ?></p>
-                        <?php foreach ($produtos as $produto): ?>
-                            <?php if ((int) $produto['estoque_atual'] <= 5): ?>
-                                <div class="stock-row">
-                                    <span><?= htmlspecialchars($produto['nome']) ?></span>
-                                    <strong><?= (int) $produto['estoque_atual'] ?> unidades</strong>
-                                </div>
-                            <?php endif; ?>
-                        <?php endforeach; ?>
-                    </div>
-                    <?php
+                    endif;
                     break;
             }
             ?>
         </main>
     </div>
+    <?php if ($page === 'dashboard'): ?><script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script><?php endif; ?>
     <script src="<?= htmlspecialchars($assetUrl('app.js')) ?>"></script>
 </body>
 </html>
