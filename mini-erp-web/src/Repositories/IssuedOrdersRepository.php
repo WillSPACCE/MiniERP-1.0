@@ -19,6 +19,9 @@ final class IssuedOrdersRepository
         foreach(['from'=>'>=','to'=>'<='] as $key=>$operator){if(preg_match('/^\d{4}-\d{2}-\d{2}$/',(string)($filters[$key]??''))){$where[]="o.operation_date {$operator}?";$params[]=$filters[$key];}}
         if(trim((string)($filters['q']??''))!==''){$where[]="CONVERT(CONCAT_WS(' ',o.id,o.internal_code,c.nome,c.cpf_cnpj,f.nome,f.cpf_cnpj,r.access_key,{$numberExpression}) USING utf8mb4) COLLATE utf8mb4_general_ci LIKE CONVERT(? USING utf8mb4) COLLATE utf8mb4_general_ci";$params[]='%'.trim((string)$filters['q']).'%';}
         $joins=" LEFT JOIN clientes c ON c.id=o.person_id AND o.operation_type='EXIT' LEFT JOIN fornecedores f ON f.id=o.person_id AND o.operation_type='ENTRY' LEFT JOIN fiscal_documents d ON d.id=(SELECT MAX(d2.id) FROM fiscal_documents d2 WHERE d2.tenant_id=o.tenant_id AND d2.source_order_id=o.id) LEFT JOIN fiscal_number_reservations r ON r.id=(SELECT MAX(r2.id) FROM fiscal_number_reservations r2 WHERE r2.tenant_id=o.tenant_id AND r2.fiscal_document_id=d.id)";
+        // Um pedido passa para a Central de Notas assim que possui documento fiscal interno.
+        // A lista operacional conserva apenas pedidos ainda sem documento.
+        $where[]='d.id IS NULL';
         $sql=' FROM fiscal_orders o'.$joins.' WHERE '.implode(' AND ',$where);
         $count=$this->pdo->prepare('SELECT COUNT(*)'.$sql);$count->execute($params);$total=(int)$count->fetchColumn();
         $pages=max(1,(int)ceil($total/$perPage));$page=min($page,$pages);$offset=($page-1)*$perPage;

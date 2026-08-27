@@ -33,13 +33,13 @@ foreach ([
 }
 
 sourceAssert(strpos($login, 'password_verify') === false, 'password verification is delegated to the authentication service');
-sourceAssert(strpos($login, "\$_SESSION['platform_user_id']") !== false, 'login stores a dedicated platform identity');
+sourceAssert(strpos($login, "\$_SESSION['platform_admin']") !== false && strpos($login, "'admin_id' =>") !== false, 'login stores a dedicated structured platform identity');
 sourceAssert(strpos($login, 'session_regenerate_id(true)') !== false, 'login regenerates the session id');
 sourceAssert(strpos($login, 'csrf_token') !== false && strpos($login, 'hash_equals') !== false, 'login has CSRF protection');
-sourceAssert(strpos($contextBootstrap, "\$_SESSION['platform_user_id']") !== false, 'dashboard bootstrap requires the dedicated platform session');
-sourceAssert(strpos($contextBootstrap, 'ConfiguredPlatformAdminAuthorizer::fromEnvironment()') !== false, 'dashboard bootstrap reauthorizes fail-closed');
+sourceAssert(strpos($contextBootstrap, "\$_SESSION['platform_admin']['admin_id']") !== false, 'dashboard bootstrap requires the dedicated platform session');
+sourceAssert(strpos($contextBootstrap, 'PersistedPlatformAdminAuthorizer') !== false, 'dashboard bootstrap reauthorizes against persisted roles');
 sourceAssert(strpos($contextBootstrap, 'ControlPlaneConnectionFactory') !== false, 'dashboard bootstrap uses the dedicated MAIN connection factory');
-sourceAssert(strpos($logout, "unset(\n    \$_SESSION['platform_user_id']") !== false, 'logout removes only the platform identity');
+sourceAssert(strpos($logout, "unset(\$_SESSION['platform_admin']") !== false, 'logout removes only the platform identity');
 sourceAssert(strpos($logout, 'hash_equals') !== false, 'logout requires a valid CSRF token');
 sourceAssert(strpos($logout, "session_destroy") === false, 'platform logout does not destroy the ERP session');
 

@@ -119,6 +119,26 @@ class Database
         self::$connection = null;
     }
 
+    /**
+     * Executa uma operação temporária em um tenant específico e restaura o estado
+     * anterior ao final da execução, evitando vazamento global do banco ativo.
+     */
+    public static function withTenantDbName(?string $dbName, callable $callback): mixed
+    {
+        $previousDbName = self::$tenantDbName;
+        $previousConnection = self::$connection;
+
+        self::$tenantDbName = $dbName;
+        self::$connection = null;
+
+        try {
+            return $callback();
+        } finally {
+            self::$tenantDbName = $previousDbName;
+            self::$connection = $previousConnection;
+        }
+    }
+
     // Cria as tabelas e insere dados iniciais do sistema.
     private static function initializeSchema(): void
     {

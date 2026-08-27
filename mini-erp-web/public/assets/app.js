@@ -411,6 +411,15 @@ document.addEventListener('DOMContentLoaded', function () {
         row.className = 'item-row';
         const idx = itemIndex++;
         const subtotal = saved ? Number(saved.net_total) : prod.preco;
+        const productTaxes = window.PRODUCT_TAXES || {};
+        const defaultTaxes = Array.isArray(productTaxes)
+            ? (productTaxes.find(item => String(item.product_id ?? item.id) === String(prod.id)) || {})
+            : (productTaxes[String(prod.id)] || {});
+        const currentTaxValue = (source, fallback = '') => {
+            if (saved && source && Object.prototype.hasOwnProperty.call(saved, source)) return saved[source];
+            if (!saved && defaultTaxes && Object.prototype.hasOwnProperty.call(defaultTaxes, source)) return defaultTaxes[source];
+            return fallback;
+        };
 
         row.innerHTML = `
             <td>${idx+1}</td>
@@ -423,8 +432,14 @@ document.addEventListener('DOMContentLoaded', function () {
             <td class="item-subtotal">${formatCurrencyBR(subtotal)}</td>
             <td><span class="status-badge">Não avaliado</span></td>
             <td>
+                <button type="button" class="link-button btn-edit">Editar</button>
+                <button type="button" class="link-button btn-tax">Impostos</button>
                 <button type="button" class="link-button btn-remove">Remover</button>
                 <input type="hidden" name="itens[${idx}][produto_id]" value="${prod.id}">
+                <input type="hidden" name="itens[${idx}][icms]" value="${String(currentTaxValue('icms', '')).replace(/"/g, '&quot;')}">
+                <input type="hidden" name="itens[${idx}][ipi]" value="${String(currentTaxValue('ipi', '')).replace(/"/g, '&quot;')}">
+                <input type="hidden" name="itens[${idx}][pis]" value="${String(currentTaxValue('pis', '')).replace(/"/g, '&quot;')}">
+                <input type="hidden" name="itens[${idx}][cofins]" value="${String(currentTaxValue('cofins', '')).replace(/"/g, '&quot;')}">
             </td>
         `;
 
@@ -434,6 +449,70 @@ document.addEventListener('DOMContentLoaded', function () {
         row.querySelector('.item-qty').addEventListener('input', computeTotals);
         row.querySelector('.item-preco').addEventListener('input', computeTotals);
         row.querySelector('.item-discount').addEventListener('input', computeTotals);
+        row.querySelector('.btn-edit').addEventListener('click', function () {
+            const productCell = row.querySelector('td:nth-child(3)');
+            if (productCell) productCell.click();
+        });
+        row.querySelector('.btn-tax').addEventListener('click', function () {
+            const modal = document.getElementById('product-taxes-modal');
+            const body = document.getElementById('modal-body-content');
+            const closeButton = document.getElementById('close-modal');
+            if (!modal || !body || !closeButton) return;
+
+            const title = (row.querySelector('td:nth-child(3)')?.textContent || 'Item').trim();
+            const itemTaxes = {
+                icms: row.querySelector('input[name$="[icms]"]').value || '',
+                ipi: row.querySelector('input[name$="[ipi]"]').value || '',
+                pis: row.querySelector('input[name$="[pis]"]').value || '',
+                cofins: row.querySelector('input[name$="[cofins]"]').value || '',
+            };
+
+            body.innerHTML = `
+                <div style="display:grid;gap:12px;">
+                    <p><strong>Produto:</strong> ${String(title).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</p>
+                    <form id="item-tax-form" style="display:grid;gap:12px;">
+                        <label>ICMS<input type="text" name="icms" value="${String(itemTaxes.icms).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}" placeholder="Ex.: 18,00"></label>
+                        <label>IPI<input type="text" name="ipi" value="${String(itemTaxes.ipi).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}" placeholder="Ex.: 0,00"></label>
+                        <label>PIS<input type="text" name="pis" value="${String(itemTaxes.pis).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}" placeholder="Ex.: 0,65"></label>
+                        <label>COFINS<input type="text" name="cofins" value="${String(itemTaxes.cofins).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}" placeholder="Ex.: 3,00"></label>
+                        <div class="form-actions">
+                            <button type="submit" class="btn primary">Salvar imposto</button>
+                            <button type="button" class="btn secondary" data-close-item-tax>Fechar</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+
+            const form = body.querySelector('#item-tax-form');
+            form?.addEventListener('submit', function (event) {
+                event.preventDefault();
+                const formData = new FormData(form);
+                const values = {
+                    icms: String(formData.get('icms') || ''),
+                    ipi: String(formData.get('ipi') || ''),
+                    pis: String(formData.get('pis') || ''),
+                    cofins: String(formData.get('cofins') || ''),
+                };
+                row.querySelector('input[name$="[icms]"]').value = values.icms;
+                row.querySelector('input[name$="[ipi]"]').value = values.ipi;
+                row.querySelector('input[name$="[pis]"]').value = values.pis;
+                row.querySelector('input[name$="[cofins]"]').value = values.cofins;
+                row.querySelector('.status-badge').textContent = Object.values(values).some(v => String(v).trim() !== '') ? 'Tributos OK' : 'Não avaliado';
+                modal.classList.remove('show');
+                modal.setAttribute('aria-hidden', 'true');
+            });
+            body.querySelector('[data-close-item-tax]')?.addEventListener('click', function () {
+                modal.classList.remove('show');
+                modal.setAttribute('aria-hidden', 'true');
+            });
+
+            closeButton.onclick = function () {
+                modal.classList.remove('show');
+                modal.setAttribute('aria-hidden', 'true');
+            };
+            modal.classList.add('show');
+            modal.setAttribute('aria-hidden', 'false');
+        });
         row.querySelector('.btn-remove').addEventListener('click', function () { row.remove(); computeTotals(); renderNoItems(); });
 
         computeTotals();
@@ -636,51 +715,46 @@ document.querySelectorAll('.notes-table tbody tr').forEach(function (row) {
     actions.querySelector('details')?.before(link);
 });
 
-// Preview do formulário: persiste o modelo selecionado e mantém a guia do ERP intacta.
-const fiscalModelSelect = document.getElementById('fiscal-model-select');
-const fiscalPreviewSubmit = document.getElementById('fiscal-preview-submit');
-const fiscalOrderForm = document.getElementById('pedido-form');
-function syncFiscalPreviewLabel() {
-    if (fiscalPreviewSubmit && fiscalModelSelect) fiscalPreviewSubmit.textContent = fiscalModelSelect.value === '65' ? 'Prévia DANFC-e' : 'Prévia DANFE';
-}
-fiscalModelSelect?.addEventListener('change', syncFiscalPreviewLabel);
-syncFiscalPreviewLabel();
-fiscalOrderForm?.addEventListener('submit', async function (event) {
-    if (event.submitter !== fiscalPreviewSubmit) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (!fiscalOrderForm.querySelector('tr.item-row')) {
-        alert('Adicione ao menos um produto ao pedido.');
-        return;
-    }
-    const previewWindow = window.open('', '_blank');
-    if (!previewWindow) {
-        alert('O navegador bloqueou a nova guia. Permita pop-ups para abrir a prévia fiscal.');
-        return;
-    }
-    previewWindow.document.write('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Gerando prévia fiscal</title><body style="font:16px system-ui;padding:32px"><h1>MiniERP</h1><p>Gerando Prévia Fiscal...</p></body></html>');
-    fiscalPreviewSubmit.disabled = true;
-    const originalLabel = fiscalPreviewSubmit.textContent;
-    fiscalPreviewSubmit.textContent = 'Gerando...';
-    try {
-        const data = new FormData(fiscalOrderForm);
-        data.set('fiscal_action', 'preview');
-        const response = await fetch('/fiscal_action.php', {method:'POST', body:data, credentials:'same-origin', headers:{Accept:'application/json'}});
-        const result = await response.json();
-        if (!response.ok || !result.success || !result.danfe_url) throw new Error(result.error_message || 'Não foi possível gerar a prévia fiscal.');
-        const orderField = fiscalOrderForm.querySelector('input[name="order_id"]');
-        if (orderField && result.order_id) orderField.value = String(result.order_id);
-        previewWindow.location.href = result.danfe_url;
-    } catch (error) {
-        previewWindow.document.open();
-        previewWindow.document.write('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Prévia indisponível</title><body style="font:16px system-ui;padding:32px"><h1>Não foi possível gerar a prévia fiscal.</h1><p>Revise os dados do pedido e tente novamente.</p><button onclick="window.close()">Fechar</button></body></html>');
-        previewWindow.document.close();
-    } finally {
-        fiscalPreviewSubmit.disabled = false;
-        fiscalPreviewSubmit.textContent = originalLabel;
-        syncFiscalPreviewLabel();
-    }
-}, true);
+(function () {
+    document.querySelectorAll('.switch-control').forEach(function (control) {
+        const input = control.querySelector('.switch-input');
+        const state = control.querySelector('.switch-state');
+        if (!input || !state) return;
+        const sync = function () {
+            const checked = input.checked;
+            control.setAttribute('aria-checked', checked ? 'true' : 'false');
+            state.textContent = checked ? 'Sim' : 'Não';
+        };
+        input.addEventListener('change', sync);
+        control.addEventListener('keydown', function (event) {
+            if (event.key === ' ' || event.key === 'Enter') {
+                event.preventDefault();
+                input.checked = !input.checked;
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+        sync();
+    });
+
+    document.querySelectorAll('.order-collapse-toggle').forEach(function (button) {
+        const card = button.closest('.logistics-card');
+        if (!card) return;
+        const label = button.firstElementChild;
+        const icon = button.lastElementChild;
+        const sync = function () {
+            const expanded = button.getAttribute('aria-expanded') === 'true';
+            card.classList.toggle('is-collapsed', !expanded);
+            if (label) label.textContent = expanded ? 'Recolher' : 'Expandir';
+            if (icon) icon.textContent = expanded ? '↑' : '↓';
+        };
+        button.addEventListener('click', function () {
+            const next = button.getAttribute('aria-expanded') !== 'true';
+            button.setAttribute('aria-expanded', String(next));
+            sync();
+        });
+        sync();
+    });
+})();
 
 // Mostrar modal de impostos quando clicar no nome do produto na tabela de itens
 document.addEventListener('click', function (e) {
@@ -696,31 +770,47 @@ document.addEventListener('click', function (e) {
         previewWindow.location.href = previewLink.href;
         return;
     }
-    const target = e.target;
-    if (target && target.tagName === 'TD' && target.parentElement && target.parentElement.classList.contains('item-row')) {
-        // coluna descrição (index 2)
-        const cells = Array.from(target.parentElement.children);
-        const descricaoCell = cells[2];
-        if (target === descricaoCell) {
-            const prodIdInput = target.parentElement.querySelector('input[type="hidden"][name$="[produto_id]"]');
-            if (!prodIdInput) return;
-            const pid = prodIdInput.value;
-            const taxes = window.PRODUCT_TAXES && window.PRODUCT_TAXES[pid] ? window.PRODUCT_TAXES[pid] : null;
-            const modal = document.getElementById('product-taxes-modal');
-            const body = document.getElementById('modal-body-content');
-            if (!modal || !body) return;
-            if (!taxes) {
-                body.innerHTML = '<p>Sem informações de impostos para este produto.</p>';
-            } else {
-                body.innerHTML = '<ul>' +
-                    '<li><strong>IPI:</strong> ' + (taxes.ipi || '-') + '</li>' +
-                    '<li><strong>ICMS:</strong> ' + (taxes.icms || '-') + '</li>' +
-                    '<li><strong>PIS:</strong> ' + (taxes.pis || '-') + '</li>' +
-                    '<li><strong>COFINS:</strong> ' + (taxes.cofins || '-') + '</li>' +
-                    '</ul>';
-            }
-            modal.classList.add('show');
-            document.getElementById('close-modal').addEventListener('click', function () { modal.classList.remove('show'); });
-        }
+
+    const descriptionCell = e.target && e.target.closest ? e.target.closest('td') : null;
+    if (!descriptionCell) return;
+
+    const itemRow = descriptionCell.closest && descriptionCell.closest('tr.item-row');
+    if (!itemRow) return;
+
+    if (e.target && e.target.closest && e.target.closest('.btn-tax')) return;
+
+    const productCell = itemRow.querySelector('td:nth-child(3)');
+    if (!productCell || (descriptionCell !== productCell && !productCell.contains(descriptionCell))) return;
+
+    const prodIdInput = itemRow.querySelector('input[type="hidden"][name$="[produto_id]"]');
+    if (!prodIdInput) return;
+
+    const pid = prodIdInput.value;
+    const taxesMap = window.PRODUCT_TAXES || {};
+    const taxes = Array.isArray(taxesMap)
+        ? taxesMap.find(item => String(item.product_id ?? item.id) === String(pid)) || null
+        : (taxesMap[pid] ?? null);
+
+    const modal = document.getElementById('product-taxes-modal');
+    const body = document.getElementById('modal-body-content');
+    const closeButton = document.getElementById('close-modal');
+    if (!modal || !body || !closeButton) return;
+
+    if (!taxes) {
+        body.innerHTML = '<p>Sem informações de impostos para este produto.</p>';
+    } else {
+        body.innerHTML = '<ul>' +
+            '<li><strong>IPI:</strong> ' + (taxes.ipi || '-') + '</li>' +
+            '<li><strong>ICMS:</strong> ' + (taxes.icms || '-') + '</li>' +
+            '<li><strong>PIS:</strong> ' + (taxes.pis || '-') + '</li>' +
+            '<li><strong>COFINS:</strong> ' + (taxes.cofins || '-') + '</li>' +
+            '</ul>';
     }
+
+    closeButton.onclick = function () {
+        modal.classList.remove('show');
+        modal.setAttribute('aria-hidden', 'true');
+    };
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
 });

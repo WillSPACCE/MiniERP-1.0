@@ -21,9 +21,11 @@ final readonly class CreateInternalFiscalDocumentService
         if($existing=$this->operations->findDocumentByKey($idempotencyKey))return$existing;
         return$this->operations->transaction(function()use($orderId,$idempotencyKey,$userId):array{
             if($existing=$this->operations->findDocumentByKey($idempotencyKey))return$existing;
-            $pdo=$this->operations->pdo();$order=$this->operations->order($orderId);
+            $pdo=$this->operations->pdo();$order=$this->operations->orderWithTransport($orderId);
             $issuer=$this->row('SELECT * FROM establishments WHERE tenant_id=? AND id=?',[$this->operations->tenantId(),$order['establishment_id']]);
-            $recipient=$order['operation_type']==='ENTRY'?$this->row('SELECT * FROM fornecedores WHERE id=?',[$order['person_id']]):$this->row('SELECT * FROM clientes WHERE id=?',[$order['person_id']]);
+            $recipient=$this->partyRow($order['operation_type']==='ENTRY'?'fornecedores':'clientes',(int)$order['person_id']);
+            $carrier=$this->carrierSnapshot((int)($order['carrier_id']??0));
+            $driver=$this->partyRow('motoristas',(int)($order['driver_id']??0))??[];
             $pending=[];
             if(!$issuer)$pending[]='Emitente não encontrado.';else foreach(['tax_id'=>'CNPJ','state_registration'=>'IE','tax_regime_code'=>'CRT','state'=>'UF','city_ibge_code'=>'IBGE']as$field=>$label)if(trim((string)($issuer[$field]??''))==='')$pending[]="Emitente sem {$label}.";
             if(!$recipient)$pending[]='Destinatário/fornecedor não encontrado.';
@@ -41,7 +43,8 @@ final readonly class CreateInternalFiscalDocumentService
             }
             if(trim((string)$order['payment_method'])==='')$pending[]='Forma de pagamento incompleta.';$pending=array_values(array_unique($pending));$status=$pending?'FISCAL_PENDING':'FISCAL_READY';
             $version=(int)$pdo->query('SELECT COALESCE(MAX(document_version),0)+1 FROM fiscal_documents WHERE tenant_id='.(int)$this->operations->tenantId().' AND source_order_id='.(int)$orderId.' FOR UPDATE')->fetchColumn();
-            $pdo->prepare('INSERT INTO fiscal_documents(tenant_id,source_order_id,document_version,idempotency_key,status,pending_json,issuer_snapshot_json,recipient_snapshot_json,payment_snapshot_json,transport_snapshot_json,totals_json,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$this->operations->tenantId(),$orderId,$version,$idempotencyKey,$status,json_encode($pending,JSON_THROW_ON_ERROR),json_encode($issuer?:[],JSON_THROW_ON_ERROR),json_encode($recipient?:[],JSON_THROW_ON_ERROR),json_encode(['condition'=>$order['payment_condition'],'method'=>$order['payment_method'],'due'=>$order['first_due_date'],'amount'=>$order['grand_total']],JSON_THROW_ON_ERROR),json_encode(['carrier_id'=>$order['carrier_id'],'driver_id'=>$order['driver_id'],'freight_mode'=>$order['freight_mode']],JSON_THROW_ON_ERROR),json_encode(['model'=>$order['fiscal_model'],'operation_nature'=>$order['operation_nature'],'operation_type'=>$order['operation_type'],'purpose'=>$order['purpose'],'final_consumer'=>(int)$order['final_consumer'],'presence_indicator'=>$order['presence_indicator'],'products'=>$order['products_total'],'discount'=>$order['discount_amount'],'freight'=>$order['freight_amount'],'insurance'=>$order['insurance_amount'],'other'=>$order['other_amount'],'grand'=>$order['grand_total'],'fiscal'=>null],JSON_THROW_ON_ERROR),$userId]);
+            $transport=['carrier_id'=>$order['carrier_id'],'carrier'=>$carrier,'driver_id'=>$order['driver_id'],'driver'=>$driver,'freight_mode'=>$order['freight_mode'],'vehicle'=>['plate'=>$order['vehicle_plate']??null,'state'=>$order['vehicle_state']??null,'rntc'=>$order['vehicle_rntc']??null],'volume'=>['quantity'=>$order['volume_quantity']??null,'species'=>$order['volume_species']??null,'brand'=>$order['volume_brand']??null,'numbering'=>$order['volume_numbering']??null,'gross_weight'=>$order['gross_weight']??null,'net_weight'=>$order['net_weight']??null]];
+            $pdo->prepare('INSERT INTO fiscal_documents(tenant_id,source_order_id,document_version,idempotency_key,status,pending_json,issuer_snapshot_json,recipient_snapshot_json,payment_snapshot_json,transport_snapshot_json,totals_json,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')->execute([$this->operations->tenantId(),$orderId,$version,$idempotencyKey,$status,json_encode($pending,JSON_THROW_ON_ERROR),json_encode($issuer?:[],JSON_THROW_ON_ERROR),json_encode($recipient?:[],JSON_THROW_ON_ERROR),json_encode(['condition'=>$order['payment_condition'],'method'=>$order['payment_method'],'due'=>$order['first_due_date'],'amount'=>$order['grand_total']],JSON_THROW_ON_ERROR),json_encode($transport,JSON_THROW_ON_ERROR),json_encode(['model'=>$order['fiscal_model'],'operation_nature'=>$order['operation_nature'],'operation_type'=>$order['operation_type'],'purpose'=>$order['purpose'],'final_consumer'=>(int)$order['final_consumer'],'presence_indicator'=>$order['presence_indicator'],'products'=>$order['products_total'],'discount'=>$order['discount_amount'],'freight'=>$order['freight_amount'],'insurance'=>$order['insurance_amount'],'other'=>$order['other_amount'],'grand'=>$order['grand_total'],'fiscal'=>null],JSON_THROW_ON_ERROR),$userId]);
             $documentId=(int)$pdo->lastInsertId();$insert=$pdo->prepare('INSERT INTO fiscal_document_items(fiscal_document_id,source_order_item_id,product_id,product_snapshot_json,quantity_commercial,quantity_taxable,unit_value_commercial,unit_value_taxable,gross_total,discount_amount,freight_amount,insurance_amount,other_amount,net_total,fiscal_status,tax_context_json,tax_resolution_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
             foreach($resolved as[$item,$context,$resolution,$itemPending]){$factor=(string)($item['conversion_factor']?:'1');$insert->execute([$documentId,$item['order_item_id'],$item['id'],json_encode($item,JSON_THROW_ON_ERROR),$item['quantity'],bcmul((string)$item['quantity'],$factor,4),$item['unit_price'],bcdiv((string)$item['unit_price'],$factor,4),$item['gross_total'],$item['discount_amount'],$item['item_freight'],$item['item_insurance'],$item['item_other'],$item['net_total'],$itemPending?'FISCAL_PENDING':'FISCAL_READY',json_encode($context?get_object_vars($context):[],JSON_THROW_ON_ERROR),$resolution?json_encode($resolution,JSON_THROW_ON_ERROR):null]);}
             $pdo->prepare('UPDATE fiscal_orders SET fiscal_status=? WHERE id=? AND tenant_id=?')->execute([$status,$orderId,$this->operations->tenantId()]);
@@ -50,4 +53,27 @@ final readonly class CreateInternalFiscalDocumentService
     }
 
     private function row(string$sql,array$params):?array{$statement=$this->operations->pdo()->prepare($sql);$statement->execute($params);return$statement->fetch(PDO::FETCH_ASSOC)?:null;}
+
+    private function partyRow(string$table,int$id):?array
+    {
+        if(!in_array($table,['clientes','fornecedores','transportadoras','motoristas'],true))return null;
+        $pdo=$this->operations->pdo();$tenantColumn=$pdo->query("SHOW COLUMNS FROM {$table} LIKE 'tenant_id'")->fetchColumn();
+        return$this->row("SELECT * FROM {$table} WHERE id=?".($tenantColumn?' AND tenant_id=?':'').' LIMIT 1',$tenantColumn?[$id,$this->operations->tenantId()]:[$id]);
+    }
+
+    private function carrierSnapshot(int $carrierId):array
+    {
+        if ($carrierId < 1) {
+            return [];
+        }
+
+        $row=$this->partyRow('transportadoras',$carrierId);
+        if(is_array($row)&&$row!==[])return$row;
+        $pdo=$this->operations->pdo();$tenantColumn=$pdo->query("SHOW COLUMNS FROM clientes LIKE 'tenant_id'")->fetchColumn();
+        $sql="SELECT * FROM clientes WHERE id=? AND (role_carrier=1 OR FIND_IN_SET('transportadora',REPLACE(COALESCE(tipo_pessoa,''),' ',''))>0)".($tenantColumn?' AND tenant_id=?':'').' LIMIT 1';
+        $row=$this->row($sql,$tenantColumn?[$carrierId,$this->operations->tenantId()]:[$carrierId]);
+        if(is_array($row)&&$row!==[])return$row;
+
+        return [];
+    }
 }

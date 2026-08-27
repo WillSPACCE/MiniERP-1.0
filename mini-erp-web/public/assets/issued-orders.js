@@ -14,7 +14,7 @@
   };
   const request = async (action, orderId, extra = {}) => {
     const body = new URLSearchParams({csrf, order_action: action, order_id: String(orderId), ...extra});
-    const response = await fetch('/issued_order_action.php', {method: 'POST', body, credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}});
+    const response = await fetch('issued_order_action.php', {method: 'POST', body, credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}});
     const data = await response.json().catch(() => ({success: false, message: 'Resposta inválida do servidor.'}));
     if (!response.ok || !data.success) throw Object.assign(new Error(data.message || 'Não foi possível concluir.'), {data});
     return data;
@@ -44,7 +44,8 @@
       const data = await request(type, orderId, type === 'issue' ? {idempotency_key: action.dataset.idempotency || ''} : {});
       toast(data.message);
       if (previewWindow && data.preview_url) previewWindow.location.href = data.preview_url;
-      if (data.redirect) setTimeout(() => { window.location.href = data.redirect; }, type === 'preview' ? 250 : 500);
+      // A prévia abre na guia criada pelo clique; a lista operacional deve permanecer aberta.
+      if (type !== 'preview' && data.redirect) setTimeout(() => { window.location.href = data.redirect; }, 500);
     } catch (error) {
       toast(error.message, true);
       if (previewWindow) { previewWindow.document.body.innerHTML = `<p style="font:16px system-ui;padding:28px">${error.message}</p>`; }
@@ -55,6 +56,8 @@
     const navigate = event => { if (!event.target.closest('a,button,details,summary') && (!event.type.includes('key') || ['Enter', ' '].includes(event.key))) window.location.href = row.dataset.editUrl; };
     row.addEventListener('click', navigate); row.addEventListener('keydown', navigate);
   });
+  const highlighted=root.querySelector('.issued-row.is-highlighted');
+  if(highlighted)requestAnimationFrame(()=>highlighted.scrollIntoView({block:'center',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'}));
   document.querySelector('[data-confirm-issued-delete]')?.addEventListener('click', async event => {
     if (!deleteId) return;
     event.currentTarget.disabled = true;

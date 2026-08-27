@@ -52,13 +52,32 @@ try {
     $pdo = new PDO("mysql:host={$d['host']};port={$d['port']};dbname={$db};charset=utf8mb4", $d['username'], $d['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
     $operations = new FiscalOperationRepository($pdo, $tenantId);
     $action = (string)($_POST['fiscal_action'] ?? '');
-    if(in_array($action,['preview','mirror','note'],true)&&!in_array((string)($_POST['fiscal_model']??''),['55','65'],true))throw new RuntimeException('FISCAL_DOCUMENT_MODEL_UNSUPPORTED');
+    if(in_array($action,['retry','transmit'],true)&&!hash_equals($csrfSession,(string)($_POST['csrf_token']??'')))throw new RuntimeException('CSRF_INVALID');
+    if(in_array($action,['preview','finalize','mirror','note'],true)&&!in_array((string)($_POST['fiscal_model']??''),['55','65'],true))throw new RuntimeException('FISCAL_DOCUMENT_MODEL_UNSUPPORTED');
+    if(in_array($action,['preview','finalize','mirror','note'],true))$_POST['operation_nature']=$operations->validatedOperationNature($_POST,(int)($_POST['order_id']??0));
 
     if ($action === 'preview') {
         if (($_POST['tipo'] ?? 'saida') === 'entrada') $_POST['cliente_id'] = $_POST['fornecedor_id'] ?? 0;
+        $operations->assertOrderParties($_POST);
         $orderId=(int)($_POST['order_id']??0);
-        if($orderId>0)$operations->updateOrder($orderId,$_POST,$_POST['itens']??[]);else$orderId=$operations->createOrder($_POST,$_POST['itens']??[],$userId);
-        echo json_encode(['success'=>true,'order_id'=>$orderId,'model'=>(string)$_POST['fiscal_model'],'model_source'=>'EXPLICIT','preserve_page'=>true,'danfe_url'=>'/fiscal_danfe_preview.php?order_id='.$orderId,'notes_url'=>null,'error_code'=>null,'error_message'=>null],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);exit;
+        $orderId=$operations->saveOrderWithTransport($orderId,$_POST,$_POST['itens']??[],$userId);
+        echo json_encode(['success'=>true,'order_id'=>$orderId,'model'=>(string)$_POST['fiscal_model'],'model_source'=>'EXPLICIT','preserve_page'=>true,'danfe_url'=>'fiscal_danfe_preview.php?order_id='.$orderId,'notes_url'=>null,'error_code'=>null,'error_message'=>null],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);exit;
+    } elseif ($action === 'finalize') {
+        if (($_POST['tipo'] ?? 'saida') === 'entrada') $_POST['cliente_id'] = $_POST['fornecedor_id'] ?? 0;
+        $operations->assertOrderParties($_POST);
+        $token = strtolower(trim((string)($_POST['idempotency_key'] ?? '')));
+        if (!preg_match('/^[a-f0-9]{64}$/', $token)) throw new RuntimeException('INVALID_IDEMPOTENCY_TOKEN');
+        if ($existing = $operations->findDocumentByKey($token)) {
+            echo json_encode(['success'=>true,'order_id'=>(int)$existing['source_order_id'],'document_id'=>(int)$existing['id'],'status'=>(string)$existing['status'],'danfe_url'=>null,'notes_url'=>'?page=fiscal_notes&highlight='.(int)$existing['id'],'error_code'=>null,'error_message'=>null],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);exit;
+        }
+        $orderId = (int)($_POST['order_id'] ?? 0);
+        $orderId = $operations->saveOrderWithTransport($orderId, $_POST, $_POST['itens'] ?? [], $userId);
+        $creator = new CreateInternalFiscalDocumentService($operations, new TaxRuleResolver(new MariaDbTaxRuleRepository($pdo, $tenantId)));
+        $document = $creator->create($orderId, $token, $userId);
+        $documentId = (int)$document['id'];
+        $events = new FiscalDocumentEventRepository($pdo, $tenantId);
+        if (!$events->timeline($documentId)) $events->append($documentId, 'DOCUMENT_CREATED', 'SNAPSHOT', (string)$document['status'], (string)$document['status'], 'Pedido concluído com snapshot fiscal interno; sem reserva ou transmissão.', [], $userId);
+        echo json_encode(['success'=>true,'order_id'=>$orderId,'document_id'=>$documentId,'status'=>(string)$document['status'],'danfe_url'=>null,'notes_url'=>'?page=fiscal_notes&highlight='.$documentId,'error_code'=>null,'error_message'=>null],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);exit;
     } elseif ($action === 'retry') {
         $documentId = filter_input(INPUT_POST, 'document_id', FILTER_VALIDATE_INT) ?: 0;
         $document=$operations->document($documentId); // tenant/IDOR validation
@@ -79,9 +98,9 @@ try {
         }
     } elseif ($action === 'mirror') {
         if (($_POST['tipo'] ?? 'saida') === 'entrada') $_POST['cliente_id'] = $_POST['fornecedor_id'] ?? 0;
+        $operations->assertOrderParties($_POST);
         $orderId = (int)($_POST['order_id'] ?? 0);
-        if ($orderId > 0) $operations->updateOrder($orderId, $_POST, $_POST['itens'] ?? []);
-        else $orderId = $operations->createOrder($_POST, $_POST['itens'] ?? [], $userId);
+        $orderId = $operations->saveOrderWithTransport($orderId, $_POST, $_POST['itens'] ?? [], $userId);
         $mirrorToken = strtolower(trim((string)($_POST['idempotency_key'] ?? '')));
         if (!preg_match('/^[a-f0-9]{64}$/', $mirrorToken)) throw new RuntimeException('INVALID_IDEMPOTENCY_TOKEN');
         $mirrorId = $operations->createMirror($orderId, $userId, $mirrorToken);
@@ -89,6 +108,7 @@ try {
         exit;
     } elseif ($action === 'note') {
         if (($_POST['tipo'] ?? 'saida') === 'entrada') $_POST['cliente_id'] = $_POST['fornecedor_id'] ?? 0;
+        $operations->assertOrderParties($_POST);
         $token = strtolower(trim((string)($_POST['idempotency_key'] ?? '')));
         if (!preg_match('/^[a-f0-9]{64}$/', $token)) throw new RuntimeException('INVALID_IDEMPOTENCY_TOKEN');
         $existing = $operations->findDocumentByKey($token);
@@ -96,8 +116,7 @@ try {
             $documentId = (int)$existing['id'];
         } else {
             $orderId = (int)($_POST['order_id'] ?? 0);
-            if ($orderId > 0) $operations->updateOrder($orderId, $_POST, $_POST['itens'] ?? []);
-            else $orderId = $operations->createOrder($_POST, $_POST['itens'] ?? [], $userId);
+            $orderId = $operations->saveOrderWithTransport($orderId, $_POST, $_POST['itens'] ?? [], $userId);
             $creator = new CreateInternalFiscalDocumentService($operations, new TaxRuleResolver(new MariaDbTaxRuleRepository($pdo, $tenantId)));
             try {
                 $document = $creator->create($orderId, $token, $userId);

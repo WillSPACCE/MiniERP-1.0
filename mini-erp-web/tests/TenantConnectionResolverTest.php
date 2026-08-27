@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../src/Context/TenantContext.php';
 require_once __DIR__ . '/../src/Infrastructure/TenantConnectionResolver.php';
+require_once __DIR__ . '/helpers/ExistingTenantFixture.php';
 
 use MiniErp\Context\TenantContext;
 use MiniErp\Infrastructure\TenantConnectionResolver;
@@ -24,8 +25,8 @@ function assertSame(mixed $expected, mixed $actual, string $message): void
     }
 }
 
-$tenantA = new TenantContext(authenticatedUserId: 1, effectiveTenantId: 1, userTenantId: 1);
-$tenantB = new TenantContext(authenticatedUserId: 2, effectiveTenantId: 5, userTenantId: 5);
+[$fixtureA,$fixtureB]=existingTenantPair();$tenantA = new TenantContext(authenticatedUserId: 1, effectiveTenantId: $fixtureA['id'], userTenantId: $fixtureA['id']);
+$tenantB = new TenantContext(authenticatedUserId: 2, effectiveTenantId: $fixtureB['id'], userTenantId: $fixtureB['id']);
 
 $pdoA = (new TenantConnectionResolver())->resolve($tenantA);
 $pdoB = (new TenantConnectionResolver())->resolve($tenantB);
@@ -35,12 +36,12 @@ $stmtB = $pdoB->query('SELECT DATABASE() AS current_db');
 $databaseA = (string) ($stmtA->fetch(PDO::FETCH_ASSOC)['current_db'] ?? '');
 $databaseB = (string) ($stmtB->fetch(PDO::FETCH_ASSOC)['current_db'] ?? '');
 
-assertSame('mini_erp_tenant_1', $databaseA, 'tenant 1 resolves to the expected database');
-assertSame('mini_erp_tenant_5', $databaseB, 'tenant 5 resolves to the expected database');
+assertSame($fixtureA['db'], $databaseA, 'tenant A resolves to its registered database');
+assertSame($fixtureB['db'], $databaseB, 'tenant B resolves to its registered database');
 
 $pdoAAgain = (new TenantConnectionResolver())->resolve($tenantA);
 $databaseAAgain = (string) ($pdoAAgain->query('SELECT DATABASE() AS current_db')->fetch(PDO::FETCH_ASSOC)['current_db'] ?? '');
-assertSame('mini_erp_tenant_1', $databaseAAgain, 'tenant A keeps its own database without global state pollution');
+assertSame($fixtureA['db'], $databaseAAgain, 'tenant A keeps its own database without global state pollution');
 
 try {
     (new TenantConnectionResolver())->resolve(new TenantContext(authenticatedUserId: 10, effectiveTenantId: 999, userTenantId: 999));
@@ -62,7 +63,7 @@ $stubResolver = new class extends TenantConnectionResolver {
 };
 
 try {
-    $stubResolver->resolve(new TenantContext(authenticatedUserId: 11, effectiveTenantId: 5, userTenantId: 5));
+    $stubResolver->resolve(new TenantContext(authenticatedUserId: 11, effectiveTenantId: $fixtureA['id'], userTenantId: $fixtureA['id']));
     fwrite(STDERR, "ASSERTION FAILED: invalid db name should fail\n");
     exit(1);
 } catch (InvalidArgumentException) {

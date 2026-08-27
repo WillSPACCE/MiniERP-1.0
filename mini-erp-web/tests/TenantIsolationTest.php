@@ -7,6 +7,7 @@ require_once __DIR__ . '/../src/Adapters/LegacyTenantContextInput.php';
 require_once __DIR__ . '/../src/Context/TenantContext.php';
 require_once __DIR__ . '/../src/Context/TenantContextResolver.php';
 require_once __DIR__ . '/../src/Infrastructure/TenantConnectionResolver.php';
+require_once __DIR__ . '/helpers/ExistingTenantFixture.php';
 
 use MiniErp\Adapters\LegacyContextAdapter;
 use MiniErp\Adapters\LegacyTenantContextInput;
@@ -37,10 +38,7 @@ function currentDatabase(
     return (string) ($row['current_db'] ?? '');
 }
 
-$tenantAId = 1;
-$tenantADBName = 'mini_erp_tenant_1';
-$tenantBId = 5;
-$tenantBDBName = 'mini_erp_tenant_5';
+[$fixtureA,$fixtureB]=existingTenantPair();$tenantAId=$fixtureA['id'];$tenantADBName=$fixtureA['db'];$tenantBId=$fixtureB['id'];$tenantBDBName=$fixtureB['db'];
 
 // Scenario 1: selectedTenantId cross-tenant must be rejected
 $selectedMismatch = LegacyContextAdapter::fromLegacyState([

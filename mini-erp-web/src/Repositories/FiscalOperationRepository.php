@@ -14,6 +14,84 @@ final readonly class FiscalOperationRepository{
  public function document(int $id):array{$s=$this->pdo->prepare('SELECT * FROM fiscal_documents WHERE id=? AND tenant_id=?');$s->execute([$id,$this->tenantId]);$d=$s->fetch(PDO::FETCH_ASSOC);if(!$d)throw new RuntimeException('Documento não encontrado no tenant.');foreach(['pending_json','issuer_snapshot_json','recipient_snapshot_json','payment_snapshot_json','transport_snapshot_json','totals_json'] as $f)$d[substr($f,0,-5)]=json_decode($d[$f],true,512,JSON_THROW_ON_ERROR);$s=$this->pdo->prepare('SELECT * FROM fiscal_document_items WHERE fiscal_document_id=? ORDER BY id');$s->execute([$id]);$d['items']=$s->fetchAll(PDO::FETCH_ASSOC);return $d;}
  public function findDocumentByKey(string $key):?array{$s=$this->pdo->prepare('SELECT * FROM fiscal_documents WHERE tenant_id=? AND idempotency_key=?');$s->execute([$this->tenantId,$key]);return $s->fetch(PDO::FETCH_ASSOC)?:null;}
  public function contextualCfop(int$establishmentId,string$direction,string$originState,string$destinationState):?string{$originState=strtoupper(trim($originState));$destinationState=strtoupper(trim($destinationState));if($originState===''||$destinationState==='')return null;$scope=$originState===$destinationState?'INTERNAL':'INTERSTATE';$context=strtoupper($direction).'_'.$scope;if(!in_array($context,['ENTRY_INTERNAL','ENTRY_INTERSTATE','EXIT_INTERNAL','EXIT_INTERSTATE'],true))return null;try{$s=$this->pdo->prepare("SELECT d.cfop FROM establishment_cfop_defaults d JOIN cfops c ON CONVERT(c.codigo USING utf8mb4) COLLATE utf8mb4_unicode_ci=d.cfop COLLATE utf8mb4_unicode_ci AND c.status='ativo' WHERE d.tenant_id=? AND d.establishment_id=? AND d.operation_context=? LIMIT 1");$s->execute([$this->tenantId,$establishmentId,$context]);$cfop=(string)$s->fetchColumn();return preg_match('/^\d{4}$/',$cfop)?$cfop:null;}catch(\Throwable){return null;}}
+ public function assertOrderParties(array $header):void
+ {
+  $entry=($header['tipo']??'saida')==='entrada';
+  $personId=(int)($entry?($header['fornecedor_id']??0):($header['cliente_id']??0));
+  $personTable=$entry?'fornecedores':'clientes';
+  if($personId<1||!$this->ownedRecordExists($personTable,$personId))throw new RuntimeException($entry?'ORDER_SUPPLIER_NOT_OWNED':'ORDER_CUSTOMER_NOT_OWNED');
+  $carrierId=(int)($header['transportadora_id']??0);
+  if($carrierId>0&&!$this->ownedRecordExists('transportadoras',$carrierId)&&!$this->ownedCarrierPersonExists($carrierId))throw new RuntimeException('ORDER_CARRIER_NOT_OWNED');
+  $driverId=(int)($header['motorista_id']??0);
+  if($driverId>0&&!$this->ownedRecordExists('motoristas',$driverId))throw new RuntimeException('ORDER_DRIVER_NOT_OWNED');
+ }
+ public function saveOrderWithTransport(int$id,array$header,array$items,int$userId):int
+ {
+    $this->ensureCommercialOrderNumberSchema();
+    return$this->transaction(function()use($id,$header,$items,$userId):int{$this->assertOrderParties($header);
+        if($id>0){
+            $this->updateOrder($id,$header,$items);
+        }else{
+            $id=$this->createOrder($header,$items,$userId);
+            // allocate commercial order number transactionally — will roll back with outer transaction on error
+            $establishmentId=(int)($header['establishment_id']??1);
+            $u=$this->pdo->prepare('UPDATE commercial_order_sequences SET last_number=last_number+1 WHERE tenant_id=? AND establishment_id=?');
+            $u->execute([$this->tenantId,$establishmentId]);
+            if($u->rowCount()===0){
+                // create starting sequence at 1
+                $this->pdo->prepare('INSERT INTO commercial_order_sequences(tenant_id,establishment_id,last_number) VALUES(?,?,1)')->execute([$this->tenantId,$establishmentId]);
+                $next=1;
+            }else{
+                $sseq=$this->pdo->prepare('SELECT last_number FROM commercial_order_sequences WHERE tenant_id=? AND establishment_id=?');
+                $sseq->execute([$this->tenantId,$establishmentId]);
+                $next=(int)$sseq->fetchColumn();
+            }
+            $this->pdo->prepare('UPDATE fiscal_orders SET order_number=? WHERE id=?')->execute([$next,$id]);
+        }
+        $this->saveTransportDetails($id,$header);
+        return$id;});
+ }
+ public function validatedOperationNature(array$header,int$orderId=0):string
+ {
+  $cfopId=(int)($header['cfop_id']??0);
+  if($cfopId>0){$s=$this->pdo->prepare("SELECT codigo,descricao FROM cfops WHERE id=? AND status='ativo' LIMIT 1");$s->execute([$cfopId]);$cfop=$s->fetch(PDO::FETCH_ASSOC);if(!$cfop)throw new RuntimeException('ORDER_CFOP_INVALID');$code=preg_replace('/\D/','',(string)$cfop['codigo']);$entry=($header['tipo']??'saida')==='entrada';$valid=$entry?in_array($code[0]??'',['1','2','3'],true):in_array($code[0]??'',['5','6','7'],true);if(!$valid)throw new RuntimeException('ORDER_CFOP_DIRECTION_INVALID');$nature=trim((string)$cfop['descricao']);if($nature==='')throw new RuntimeException('ORDER_NATURE_NOT_CONFIGURED');return$nature;}
+  // Compatibilidade: um pedido histórico pode ser salvo sem reescrever sua natureza antiga.
+  if($orderId>0){$current=$this->order($orderId);$posted=trim((string)($header['operation_nature']??''));if($posted!==''&&hash_equals((string)$current['operation_nature'],$posted))return$posted;}
+  throw new RuntimeException('ORDER_CFOP_REQUIRED');
+ }
+ public function orderWithTransport(int$id):array
+ {
+  $order=$this->order($id);return array_merge($order,$this->transportDetails($id));
+ }
+ public function transportDetails(int$orderId):array
+ {
+  $s=$this->pdo->prepare('SELECT vehicle_plate,vehicle_state,vehicle_rntc,volume_quantity,volume_species,volume_brand,volume_numbering,gross_weight,net_weight FROM fiscal_order_transport_details WHERE order_id=? AND tenant_id=?');$s->execute([$orderId,$this->tenantId]);return$s->fetch(PDO::FETCH_ASSOC)?:[];
+ }
+ private function saveTransportDetails(int$orderId,array$header):void
+ {
+  $quantity=trim((string)($header['volume_quantity']??''));if($quantity!==''&&(!ctype_digit($quantity)||(int)$quantity<0))throw new RuntimeException('ORDER_VOLUME_QUANTITY_INVALID');
+  $weight=function(string$key)use($header):?string{$raw=trim((string)($header[$key]??''));if($raw==='')return null;$value=str_replace(',','.',$raw);if(!preg_match('/^\d+(\.\d{1,3})?$/',$value))throw new RuntimeException('ORDER_WEIGHT_INVALID');return bcadd($value,'0',3);};
+  $plate=strtoupper(trim((string)($header['vehicle_plate']??'')));$state=strtoupper(trim((string)($header['vehicle_state']??'')));$rntc=trim((string)($header['vehicle_rntc']??''));if($plate!==''&&!preg_match('/^[A-Z0-9-]{7,10}$/',$plate))throw new RuntimeException('ORDER_VEHICLE_PLATE_INVALID');if($state!==''&&!preg_match('/^[A-Z]{2}$/',$state))throw new RuntimeException('ORDER_VEHICLE_STATE_INVALID');
+  $values=['vehicle_plate'=>$plate?:null,'vehicle_state'=>$state?:null,'vehicle_rntc'=>$rntc?:null,'volume_quantity'=>$quantity===''?null:(int)$quantity,'volume_species'=>trim((string)($header['volume_species']??''))?:null,'volume_brand'=>trim((string)($header['volume_brand']??''))?:null,'volume_numbering'=>trim((string)($header['volume_numbering']??''))?:null,'gross_weight'=>$weight('gross_weight'),'net_weight'=>$weight('net_weight')];
+  if(!array_filter($values,static fn($value)=>$value!==null)){$this->pdo->prepare('DELETE FROM fiscal_order_transport_details WHERE order_id=? AND tenant_id=?')->execute([$orderId,$this->tenantId]);return;}
+  $sql='INSERT INTO fiscal_order_transport_details(order_id,tenant_id,vehicle_plate,vehicle_state,vehicle_rntc,volume_quantity,volume_species,volume_brand,volume_numbering,gross_weight,net_weight) VALUES(:order_id,:tenant_id,:vehicle_plate,:vehicle_state,:vehicle_rntc,:volume_quantity,:volume_species,:volume_brand,:volume_numbering,:gross_weight,:net_weight) ON DUPLICATE KEY UPDATE vehicle_plate=VALUES(vehicle_plate),vehicle_state=VALUES(vehicle_state),vehicle_rntc=VALUES(vehicle_rntc),volume_quantity=VALUES(volume_quantity),volume_species=VALUES(volume_species),volume_brand=VALUES(volume_brand),volume_numbering=VALUES(volume_numbering),gross_weight=VALUES(gross_weight),net_weight=VALUES(net_weight)';$this->pdo->prepare($sql)->execute(['order_id'=>$orderId,'tenant_id'=>$this->tenantId,...$values]);
+ }
+ private function ensureCommercialOrderNumberSchema():void
+ {
+  $this->pdo->exec('ALTER TABLE fiscal_orders ADD COLUMN IF NOT EXISTS order_number BIGINT UNSIGNED NULL DEFAULT NULL');
+  $this->pdo->exec('CREATE TABLE IF NOT EXISTS commercial_order_sequences (tenant_id INT UNSIGNED NOT NULL, establishment_id INT UNSIGNED NOT NULL DEFAULT 0, last_number BIGINT UNSIGNED NOT NULL DEFAULT 0, PRIMARY KEY (tenant_id, establishment_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+  $this->pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_fiscal_orders_tenant_establishment_order_number ON fiscal_orders (order_number, tenant_id, establishment_id)');
+ }
+ private function ownedRecordExists(string$table,int$id):bool
+ {
+  if(!in_array($table,['clientes','fornecedores','transportadoras','motoristas'],true))return false;
+  $column=$this->pdo->query("SHOW COLUMNS FROM {$table} LIKE 'tenant_id'")->fetchColumn();
+  $sql="SELECT 1 FROM {$table} WHERE id=?".($column?' AND tenant_id=?':'').' LIMIT 1';$s=$this->pdo->prepare($sql);$s->execute($column?[$id,$this->tenantId]:[$id]);return(bool)$s->fetchColumn();
+ }
+ private function ownedCarrierPersonExists(int$id):bool
+ {
+  $tenantColumn=$this->pdo->query("SHOW COLUMNS FROM clientes LIKE 'tenant_id'")->fetchColumn();$sql="SELECT 1 FROM clientes WHERE id=? AND (role_carrier=1 OR FIND_IN_SET('transportadora',REPLACE(COALESCE(tipo_pessoa,''),' ',''))>0)".($tenantColumn?' AND tenant_id=?':'').' LIMIT 1';$s=$this->pdo->prepare($sql);$s->execute($tenantColumn?[$id,$this->tenantId]:[$id]);return(bool)$s->fetchColumn();
+ }
  public function pdo():PDO{return $this->pdo;} public function tenantId():int{return $this->tenantId;}
  private function model(mixed$value):string{$model=trim((string)$value);if(!in_array($model,['55','65'],true))throw new RuntimeException('FISCAL_DOCUMENT_MODEL_UNSUPPORTED');return$model;}
  private function product(int $id):array{$s=$this->pdo->prepare('SELECT * FROM produtos WHERE id=?');$s->execute([$id]);$p=$s->fetch(PDO::FETCH_ASSOC);if(!$p)throw new RuntimeException('Produto inválido.');return $p;}

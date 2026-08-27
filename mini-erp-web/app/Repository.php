@@ -65,16 +65,14 @@ class Repository {
             $t = $row->fetch();
             if ($t && !empty($t['db_name'])) {
                 $dbName = $t['db_name'];
-                Database::setTenantDbName($dbName);
-                $tenantPdo = Database::getConnection();
-                if ($blocked) {
-                    try { $tenantPdo->prepare("UPDATE usuarios SET status = 'bloqueado'")->execute(); } catch (Throwable $e) {}
-                } else {
-                    try { $tenantPdo->prepare("UPDATE usuarios SET status = 'ativo'")->execute(); } catch (Throwable $e) {}
-                }
-                // restore
-                Database::setTenantDbName(null);
-                Database::getConnection();
+                Database::withTenantDbName($dbName, function () use ($blocked): void {
+                    $tenantPdo = Database::getConnection();
+                    if ($blocked) {
+                        try { $tenantPdo->prepare("UPDATE usuarios SET status = 'bloqueado'")->execute(); } catch (Throwable $e) {}
+                    } else {
+                        try { $tenantPdo->prepare("UPDATE usuarios SET status = 'ativo'")->execute(); } catch (Throwable $e) {}
+                    }
+                });
             }
         } catch (Throwable $e) {
             throw $e;
@@ -87,12 +85,24 @@ class Repository {
         if (session_status() === PHP_SESSION_NONE) session_start();
         $erpUserId = (int) ($_SESSION['erp_user_id'] ?? 0);
         $erpTenantId = (int) ($_SESSION['erp_tenant_id'] ?? 0);
+        $legacyUserProvided = array_key_exists('user_id', $_SESSION);
+        $legacyTenantProvided = array_key_exists('tenant_id', $_SESSION);
+
         if ($erpUserId > 0 || $erpTenantId > 0) {
-            if ($erpUserId < 1 || $erpTenantId < 1
-                || (int) ($_SESSION['user_id'] ?? 0) !== $erpUserId
-                || (int) ($_SESSION['tenant_id'] ?? 0) !== $erpTenantId) {
-                throw new RuntimeException('Acesso negado: contexto ERP e compatibilidade legada divergentes.');
+            if ($erpUserId < 1 || $erpTenantId < 1) {
+                throw new RuntimeException('Acesso negado: sessão ERP incompleta.');
             }
+
+            if ($legacyUserProvided || $legacyTenantProvided) {
+                $legacyUserId = (int) ($_SESSION['user_id'] ?? $erpUserId);
+                $legacyTenantId = (int) ($_SESSION['tenant_id'] ?? $erpTenantId);
+                if ($legacyUserId !== $erpUserId || $legacyTenantId !== $erpTenantId) {
+                    throw new RuntimeException('Acesso negado: contexto ERP e compatibilidade legada divergentes.');
+                }
+            }
+
+            $_SESSION['user_id'] = $erpUserId;
+            $_SESSION['tenant_id'] = $erpTenantId;
             return $erpTenantId;
         }
         $tid = $_SESSION['tenant_id'] ?? null;
@@ -511,7 +521,7 @@ class Repository {
     }
 
     // Cria ou atualiza um cliente.
-    public function saveCliente(array $data): void
+    public function saveCliente(array $data): int
     {
         require_once __DIR__ . '/../src/Services/PersonFiscalData.php';
         $fiscalData = (new \MiniErp\Services\PersonFiscalData($data))->toArray();
@@ -622,13 +632,14 @@ class Repository {
             $hasTenantColumn = array_key_exists('tenant_id', $payload);
             $stmt = $this->pdo->prepare('UPDATE clientes SET ' . implode(', ', $set) . ' WHERE id = :id' . ($hasTenantColumn ? ' AND tenant_id = :tenant_id' : ''));
             $stmt->execute($payload);
-            return;
+            return $stmt->rowCount();
         }
 
         $fields = array_keys($payload);
         $placeholders = array_map(fn($field) => ':' . $field, $fields);
         $stmt = $this->pdo->prepare('INSERT INTO clientes (' . implode(', ', $fields) . ') VALUES (' . implode(', ', $placeholders) . ')');
         $stmt->execute($payload);
+        return $stmt->rowCount();
     }
 
     // Remove um cliente pelo ID.
@@ -812,8 +823,9 @@ class Repository {
     public function findMotorista(int $id): ?array
     {
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('SELECT * FROM motoristas WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $id, 'tid' => $tenantId]);
+        $hasTenant = (bool)$this->pdo->query("SHOW COLUMNS FROM motoristas LIKE 'tenant_id'")->fetch();
+        $stmt = $this->pdo->prepare('SELECT * FROM motoristas WHERE id = :id'.($hasTenant?' AND tenant_id = :tid':''));
+        $params=['id'=>$id];if($hasTenant)$params['tid']=$tenantId;$stmt->execute($params);
         return $stmt->fetch() ?: null;
     }
 
@@ -846,9 +858,10 @@ class Repository {
         }
 
         $tenantId = $this->requireTenantId();
+        $hasTenant = (bool)$this->pdo->query("SHOW COLUMNS FROM motoristas LIKE 'tenant_id'")->fetch();
         $stmt = !empty($data['id'])
-            ? $this->pdo->prepare('UPDATE motoristas SET nome = :nome, cpf = :cpf, cnh = :cnh, categoria_cnh = :categoria_cnh, vencimento_cnh = :vencimento_cnh, telefone = :telefone, status = :status WHERE id = :id AND tenant_id = :tid')
-            : $this->pdo->prepare('INSERT INTO motoristas (nome, cpf, cnh, categoria_cnh, vencimento_cnh, telefone, status, tenant_id) VALUES (:nome, :cpf, :cnh, :categoria_cnh, :vencimento_cnh, :telefone, :status, :tid)');
+            ? $this->pdo->prepare('UPDATE motoristas SET nome = :nome, cpf = :cpf, cnh = :cnh, categoria_cnh = :categoria_cnh, vencimento_cnh = :vencimento_cnh, telefone = :telefone, status = :status WHERE id = :id'.($hasTenant?' AND tenant_id = :tid':''))
+            : $this->pdo->prepare('INSERT INTO motoristas (nome, cpf, cnh, categoria_cnh, vencimento_cnh, telefone, status'.($hasTenant?', tenant_id':'').') VALUES (:nome, :cpf, :cnh, :categoria_cnh, :vencimento_cnh, :telefone, :status'.($hasTenant?', :tid':'').')');
 
         $params = [
             'nome' => $nome,
@@ -862,10 +875,8 @@ class Repository {
 
         if (!empty($data['id'])) {
             $params['id'] = (int) $data['id'];
-            $params['tid'] = $tenantId;
-        } else {
-            $params['tid'] = $tenantId;
-        }
+            if($hasTenant)$params['tid'] = $tenantId;
+        } elseif($hasTenant) $params['tid'] = $tenantId;
 
         $stmt->execute($params);
     }
@@ -873,19 +884,51 @@ class Repository {
     public function deleteMotorista(int $id): void
     {
         $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('DELETE FROM motoristas WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $id, 'tid' => $tenantId]);
+        $hasTenant=(bool)$this->pdo->query("SHOW COLUMNS FROM motoristas LIKE 'tenant_id'")->fetch();$stmt=$this->pdo->prepare('DELETE FROM motoristas WHERE id=:id'.($hasTenant?' AND tenant_id=:tid':''));$params=['id'=>$id];if($hasTenant)$params['tid']=$tenantId;$stmt->execute($params);
     }
 
     public function listTransportadoras(): array
     {
         try {
             $tenantId = $this->requireTenantId();
-            $hasCol = (bool) $this->pdo->query("SHOW COLUMNS FROM transportadoras LIKE 'tenant_id'")->fetch();
-            if ($hasCol) {
-                return $this->pdo->query('SELECT * FROM transportadoras WHERE tenant_id = ' . (int)$tenantId . ' ORDER BY id DESC')->fetchAll();
+            $rows = [];
+
+            $legacyTableExists = (bool) $this->pdo->query("SHOW TABLES LIKE 'transportadoras'")->fetch();
+            if ($legacyTableExists) {
+                $stmt = $this->pdo->query("SHOW COLUMNS FROM transportadoras LIKE 'tenant_id'");
+                $hasTenantCol = (bool) $stmt->fetch();
+                $legacySql = $hasTenantCol
+                    ? 'SELECT * FROM transportadoras WHERE tenant_id = ' . (int)$tenantId . ' ORDER BY id DESC'
+                    : 'SELECT * FROM transportadoras ORDER BY id DESC';
+                $legacyRows = $this->pdo->query($legacySql)->fetchAll();
+                foreach ($legacyRows as $row) {
+                    $rows[(string) ($row['cpf_cnpj'] ?? $row['document'] ?? $row['id'])] = $row;
+                }
             }
-            return $this->pdo->query('SELECT * FROM transportadoras ORDER BY id DESC')->fetchAll();
+
+            $clientesTableExists = (bool) $this->pdo->query("SHOW TABLES LIKE 'clientes'")->fetch();
+            if ($clientesTableExists) {
+                $stmt = $this->pdo->query("SHOW COLUMNS FROM clientes LIKE 'tenant_id'");
+                $hasTenantCol = (bool) $stmt->fetch();
+                $clientWhere = "(role_carrier = 1 OR FIND_IN_SET('transportadora', REPLACE(COALESCE(tipo_pessoa, ''), ' ', '')) > 0)";
+                $sql = "SELECT id, nome, nome_fantasia, cpf_cnpj, email, telefone, fone_principal, cidade, uf, status FROM clientes WHERE " . $clientWhere;
+                if ($hasTenantCol) {
+                    $sql .= ' AND tenant_id = ' . (int)$tenantId;
+                }
+                $sql .= ' ORDER BY id DESC';
+                foreach ($this->pdo->query($sql)->fetchAll() as $row) {
+                    $key = (string) ($row['cpf_cnpj'] ?? $row['document'] ?? $row['id']);
+                    $rows[$key] = $row;
+                }
+            }
+
+            $result = array_values($rows);
+            usort($result, static function (array $a, array $b): int {
+                $left = trim((string) ($a['nome'] ?? $a['nome_fantasia'] ?? ''));
+                $right = trim((string) ($b['nome'] ?? $b['nome_fantasia'] ?? ''));
+                return strcasecmp($left, $right);
+            });
+            return $result;
         } catch (Throwable $e) {
             return [];
         }
@@ -893,10 +936,37 @@ class Repository {
 
     public function findTransportadora(int $id): ?array
     {
-        $tenantId = $this->requireTenantId();
-        $stmt = $this->pdo->prepare('SELECT * FROM transportadoras WHERE id = :id AND tenant_id = :tid');
-        $stmt->execute(['id' => $id, 'tid' => $tenantId]);
-        return $stmt->fetch() ?: null;
+        try {
+            $tenantId = $this->requireTenantId();
+            $stmt = $this->pdo->prepare('SELECT * FROM transportadoras WHERE id = :id AND tenant_id = :tid');
+            $stmt->execute(['id' => $id, 'tid' => $tenantId]);
+            $row = $stmt->fetch();
+            if ($row) {
+                return $row;
+            }
+
+            $stmt = $this->pdo->query("SHOW TABLES LIKE 'clientes'");
+            if (!$stmt->fetch()) {
+                return null;
+            }
+
+            $tenantCheck = $this->pdo->query("SHOW COLUMNS FROM clientes LIKE 'tenant_id'")->fetch();
+            $sql = "SELECT * FROM clientes WHERE id = :id AND (role_carrier = 1 OR FIND_IN_SET('transportadora', REPLACE(COALESCE(tipo_pessoa, ''), ' ', '')) > 0)";
+            if ($tenantCheck) {
+                $sql .= ' AND tenant_id = :tid';
+            }
+            $sql .= ' LIMIT 1';
+
+            $stmt = $this->pdo->prepare($sql);
+            $params = ['id' => $id];
+            if ($tenantCheck) {
+                $params['tid'] = $tenantId;
+            }
+            $stmt->execute($params);
+            return $stmt->fetch() ?: null;
+        } catch (Throwable $e) {
+            return null;
+        }
     }
 
     public function saveTransportadora(array $data): void
@@ -1146,52 +1216,50 @@ class Repository {
             $dbName = $t['db_name'] ?? null;
             if ($dbName) {
                 // inicializa conexão para o tenant e insere admin local se necessário
-                Database::setTenantDbName($dbName);
-                $tenantPdo = Database::getConnection();
-                try {
-                    $chk2 = $tenantPdo->prepare('SELECT id FROM usuarios WHERE email = :email LIMIT 1');
-                    $chk2->execute(['email' => $email]);
-                    $exists2 = $chk2->fetch();
-                    if (!$exists2) {
-                        $senha2 = password_hash('admin', PASSWORD_DEFAULT);
-                        $nomeUser2 = $nome ?: 'Administrador';
-                        $ins2 = $tenantPdo->prepare('INSERT INTO usuarios (nome, email, senha, role, email_verified, status) VALUES (:nome, :email, :senha, :role, :verified, :status)');
-                        $ins2->execute([
-                            'nome' => $nomeUser2,
-                            'email' => $email,
-                            'senha' => $senha2,
-                            'role' => 'admin',
-                            'verified' => 1,
-                            'status' => 'ativo',
-                        ]);
-                    }
-                    // Também garante um usuário administrativo padrão local ao tenant: admin@local / senha 'admin'
+                Database::withTenantDbName($dbName, function () use ($email, $nome): void {
+                    $tenantPdo = Database::getConnection();
                     try {
-                        $localEmail = 'admin@local';
-                        $chkLocal = $tenantPdo->prepare('SELECT id FROM usuarios WHERE email = :email LIMIT 1');
-                        $chkLocal->execute(['email' => $localEmail]);
-                        $existsLocal = $chkLocal->fetch();
-                        if (!$existsLocal) {
-                            $senhaLocal = password_hash('admin', PASSWORD_DEFAULT);
-                            $insLocal = $tenantPdo->prepare('INSERT INTO usuarios (nome, email, senha, role, email_verified, status) VALUES (:nome, :email, :senha, :role, :verified, :status)');
-                            $insLocal->execute([
+                        $chk2 = $tenantPdo->prepare('SELECT id FROM usuarios WHERE email = :email LIMIT 1');
+                        $chk2->execute(['email' => $email]);
+                        $exists2 = $chk2->fetch();
+                        if (!$exists2) {
+                            $senha2 = password_hash('admin', PASSWORD_DEFAULT);
+                            $nomeUser2 = $nome ?: 'Administrador';
+                            $ins2 = $tenantPdo->prepare('INSERT INTO usuarios (nome, email, senha, role, email_verified, status) VALUES (:nome, :email, :senha, :role, :verified, :status)');
+                            $ins2->execute([
                                 'nome' => $nomeUser2,
-                                'email' => $localEmail,
-                                'senha' => $senhaLocal,
+                                'email' => $email,
+                                'senha' => $senha2,
                                 'role' => 'admin',
                                 'verified' => 1,
                                 'status' => 'ativo',
                             ]);
                         }
+                        // Também garante um usuário administrativo padrão local ao tenant: admin@local / senha 'admin'
+                        try {
+                            $localEmail = 'admin@local';
+                            $chkLocal = $tenantPdo->prepare('SELECT id FROM usuarios WHERE email = :email LIMIT 1');
+                            $chkLocal->execute(['email' => $localEmail]);
+                            $existsLocal = $chkLocal->fetch();
+                            if (!$existsLocal) {
+                                $senhaLocal = password_hash('admin', PASSWORD_DEFAULT);
+                                $insLocal = $tenantPdo->prepare('INSERT INTO usuarios (nome, email, senha, role, email_verified, status) VALUES (:nome, :email, :senha, :role, :verified, :status)');
+                                $insLocal->execute([
+                                    'nome' => $nomeUser2 ?? ($nome ?: 'Administrador'),
+                                    'email' => $localEmail,
+                                    'senha' => $senhaLocal,
+                                    'role' => 'admin',
+                                    'verified' => 1,
+                                    'status' => 'ativo',
+                                ]);
+                            }
+                        } catch (Throwable $e) {
+                            // ignore failures for local admin insertion
+                        }
                     } catch (Throwable $e) {
-                        // ignore failures for local admin insertion
+                        // ignore tenant-level insertion errors
                     }
-                } catch (Throwable $e) {
-                    // ignore tenant-level insertion errors
-                }
-                // volta para conexão padrão (principal)
-                Database::setTenantDbName(null);
-                Database::getConnection();
+                });
             }
         } catch (Throwable $e) {
             // ignore
@@ -1224,17 +1292,14 @@ class Repository {
 
         // inicializa schema no novo DB usando a rotina existente em Database
         try {
-            Database::setTenantDbName($dbName);
-            Database::getConnection(); // isso executa initializeSchema()
+            Database::withTenantDbName($dbName, function () {
+                Database::getConnection(); // isso executa initializeSchema()
+            });
         } catch (Throwable $e) {
             // se falhar, limpa tenant setting e rethrow
             Database::setTenantDbName(null);
             throw $e;
         }
-
-        // volta para conexão padrão
-        Database::setTenantDbName(null);
-        Database::getConnection();
 
         return $dbName;
     }

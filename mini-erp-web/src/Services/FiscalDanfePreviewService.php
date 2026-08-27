@@ -29,9 +29,9 @@ final class FiscalDanfePreviewService
     public function render(int $orderId):array
     {
         if($orderId<1)throw new FiscalDanfeException('PREVIEW_ORDER_NOT_FOUND','Pedido não encontrado.');
-        try{$order=$this->operations->order($orderId);}catch(\Throwable){throw new FiscalDanfeException('PREVIEW_ORDER_NOT_FOUND','Pedido não encontrado para esta empresa.');}
+        try{$order=$this->operations->orderWithTransport($orderId);}catch(\Throwable){throw new FiscalDanfeException('PREVIEW_ORDER_NOT_FOUND','Pedido não encontrado para esta empresa.');}
         $issuer=$this->one('SELECT * FROM establishments WHERE tenant_id=? AND id=?',[$this->operations->tenantId(),(int)$order['establishment_id']]);
-        $recipient=$this->one(($order['operation_type']==='ENTRY'?'SELECT * FROM fornecedores WHERE id=?':'SELECT * FROM clientes WHERE id=?'),[(int)$order['person_id']]);
+        $recipient=$this->partyRow($order['operation_type']==='ENTRY'?'fornecedores':'clientes',(int)$order['person_id']);
         $preflight=$this->previewPreflight??new FiscalPreviewPreflightService();$preflight->assertCommercial($order,$issuer?:[],$recipient?:[]);
         $settings=$this->one('SELECT primary_model FROM establishment_fiscal_settings WHERE tenant_id=? AND establishment_id=?',[$this->operations->tenantId(),(int)$issuer['id']]);
         $modelResolution=($this->modelResolver??new FiscalPreviewModelResolver())->resolveWithSource($order['fiscal_model']??null,$settings['primary_model']??null);$model=$modelResolution['model'];$modelSource=$modelResolution['source'];
@@ -55,17 +55,43 @@ final class FiscalDanfePreviewService
         try{$technicalKey=(new NfeAccessKeyGenerator())->generate($ufCode,$issued->format('ym'),(string)$issuer['tax_id'],$model,$series,$number,1,$numericCode);}catch(\Throwable){throw new FiscalDanfeException('PREVIEW_IDENTITY_INVALID','Os dados do emitente são insuficientes para construir o XML de pré-visualização.');}
         $purpose=$this->purpose((string)$order['purpose']);try{$payment=$this->payment((string)$order['payment_method']);}catch(FiscalDanfeException){$warnings[]=$preflight->warning('PAYMENT_METHOD_PENDING','Forma de pagamento fiscal pendente.');$payment='99';}
         $label=$model==='55'?'DANFE':'DANFC-e';$totals=['model'=>$model,'operation_nature'=>(string)$order['operation_nature'],'operation_type'=>(string)$order['operation_type'],'purpose'=>$purpose,'final_consumer'=>(int)$order['final_consumer'],'presence_indicator'=>(int)$order['presence_indicator'],'products'=>(string)$order['products_total'],'discount'=>(string)$order['discount_amount'],'freight'=>(string)$order['freight_amount'],'insurance'=>(string)$order['insurance_amount'],'other'=>(string)$order['other_amount'],'grand'=>(string)$order['grand_total'],'notes'=>'PRÉVIA '.$label.' — NÃO TRANSMITIDA À SEFAZ — NF-e NÃO PROTOCOLADA — SEM VALOR FISCAL. Pedido administrativo #'.$orderId.'.'.$preflight->warningText($warnings)];
-        $dto=new FiscalDocumentDTO(0,$this->operations->tenantId(),$model,$issuer,$previewRecipient,$items,$totals,['method'=>$payment,'amount'=>(string)$order['grand_total']],['freight_mode'=>(string)$order['freight_mode']]);
+        $carrier=$this->carrierSnapshot((int)($order['carrier_id']??0));
+        $driver=$this->partyRow('motoristas',(int)($order['driver_id']??0))??[];
+        $transport=['carrier_id'=>(int)($order['carrier_id']??0),'carrier'=>$carrier,'driver_id'=>(int)($order['driver_id']??0),'driver'=>$driver,'freight_mode'=>(string)$order['freight_mode'],'vehicle'=>['plate'=>$order['vehicle_plate']??null,'state'=>$order['vehicle_state']??null,'rntc'=>$order['vehicle_rntc']??null],'volume'=>['quantity'=>$order['volume_quantity']??null,'species'=>$order['volume_species']??null,'brand'=>$order['volume_brand']??null,'numbering'=>$order['volume_numbering']??null,'gross_weight'=>$order['gross_weight']??null,'net_weight'=>$order['net_weight']??null]];
+        $dto=new FiscalDocumentDTO(0,$this->operations->tenantId(),$model,$issuer,$previewRecipient,$items,$totals,['method'=>$payment,'amount'=>(string)$order['grand_total']],$transport);
         // tpAmb=1 evita que a biblioteca substitua o nome real do destinatário pela
         // frase de homologação. Isto não transmite nada: o XML é apenas técnico,
         // permanece sem assinatura/protocolo e traz as marcas explícitas de prévia.
         try{$xml=(new FiscalNfeXmlBuilder())->build($dto,['access_key'=>$technicalKey,'uf_code'=>$ufCode,'numeric_code'=>$numericCode,'series'=>$series,'number'=>$number,'issued_at'=>$issued->format(DATE_ATOM),'environment'=>1,'emission_type'=>1,'destination_scope'=>strtoupper((string)$issuer['state'])===strtoupper($destinationState)?1:2,'process_version'=>'MiniERP-PREVIEW']);}catch(FiscalDanfeException$e){throw$e;}catch(\Throwable$e){throw new FiscalDanfeException('PREVIEW_XML_INVALID','Não foi possível gerar a prévia DANFE. Revise emitente, cliente, produtos e tributação.',$e);}
-        $cacheKey=hash('sha256',$this->operations->tenantId().'|'.$orderId.'|'.$model.'|'.$modelSource.'|'.$this->spedDaVersion.'|'.$xml);$dir=rtrim($this->cacheRoot,'/\\').DIRECTORY_SEPARATOR.'tenant-'.$this->operations->tenantId().DIRECTORY_SEPARATOR.'model-'.$model;$path=$dir.DIRECTORY_SEPARATOR.$cacheKey.'.pdf';$hit=is_file($path);$renderMeta=[];
+        $previewSnapshot=['order'=>$order,'recipient'=>$previewRecipient,'carrier'=>$carrier,'items'=>$items,'totals'=>$totals,'model'=>$model];
+        $snapshotChecksum=hash('sha256',json_encode($previewSnapshot,JSON_UNESCAPED_UNICODE|JSON_PRESERVE_ZERO_FRACTION|JSON_THROW_ON_ERROR));
+        $cacheKey=hash('sha256',$this->operations->tenantId().'|'.$orderId.'|'.$model.'|'.$modelSource.'|'.$this->spedDaVersion.'|'.$snapshotChecksum.'|'.hash('sha256',$xml));$dir=rtrim($this->cacheRoot,'/\\').DIRECTORY_SEPARATOR.'tenant-'.$this->operations->tenantId().DIRECTORY_SEPARATOR.'model-'.$model;$path=$dir.DIRECTORY_SEPARATOR.$cacheKey.'.pdf';$hit=is_file($path);$renderMeta=[];
         if($hit){$pdf=(string)file_get_contents($path);$renderMeta=['renderer'=>$model==='55'?'NFePHP\\DA\\NFe\\Danfe':'NFePHP\\DA\\NFe\\Danfce','format'=>$model==='55'?'A4':'80mm','orientation'=>'P'];}else{$renderMeta=($this->renderer??new FiscalDocumentPreviewRenderer())->render($model,$xml);$pdf=(string)$renderMeta['bytes'];if(!str_starts_with($pdf,'%PDF'))throw new FiscalDanfeException('PREVIEW_RENDER_FAILED','O renderizador não retornou um PDF válido.');if(!is_dir($dir)&&!mkdir($dir,0700,true)&&!is_dir($dir))throw new FiscalDanfeException('PREVIEW_CACHE_FAILED','Não foi possível criar o cache privado da prévia.');if(file_put_contents($path,$pdf,LOCK_EX)===false)throw new FiscalDanfeException('PREVIEW_CACHE_FAILED','Não foi possível armazenar o cache privado da prévia.');@chmod($path,0600);}
-        $prefix=$model==='55'?'PREVIA-DANFE-55':'PREVIA-DANFCE-65';return['bytes'=>$pdf,'filename'=>$prefix.'-PEDIDO-'.$orderId.'.pdf','xml'=>$xml,'cache'=>$hit?'HIT':'MISS','model'=>$model,'model_source'=>$modelSource,'renderer'=>$renderMeta['renderer'],'page_format'=>$renderMeta['format'],'orientation'=>$renderMeta['orientation'],'preview'=>true,'preview_only'=>true,'warnings'=>$warnings,'tax_status'=>$warnings?'PENDING':'RESOLVED','official_access_key'=>null,'technical_key'=>$technicalKey,'number_reference'=>$number,'series_reference'=>$series,'sha256'=>hash('sha256',$pdf)];
+        $prefix=$model==='55'?'PREVIA-DANFE-55':'PREVIA-DANFCE-65';return['bytes'=>$pdf,'filename'=>$prefix.'-PEDIDO-'.$orderId.'.pdf','xml'=>$xml,'cache'=>$hit?'HIT':'MISS','cache_key'=>$cacheKey,'snapshot'=>$previewSnapshot,'snapshot_checksum'=>$snapshotChecksum,'model'=>$model,'model_source'=>$modelSource,'renderer'=>$renderMeta['renderer'],'page_format'=>$renderMeta['format'],'orientation'=>$renderMeta['orientation'],'preview'=>true,'preview_only'=>true,'warnings'=>$warnings,'tax_status'=>$warnings?'PENDING':'RESOLVED','official_access_key'=>null,'technical_key'=>$technicalKey,'number_reference'=>$number,'series_reference'=>$series,'sha256'=>hash('sha256',$pdf)];
     }
 
     private function one(string$sql,array$params):?array{$statement=$this->pdo->prepare($sql);$statement->execute($params);return$statement->fetch(PDO::FETCH_ASSOC)?:null;}
+    private function partyRow(string$table,int$id):?array
+    {
+        if(!in_array($table,['clientes','fornecedores','transportadoras','motoristas'],true))return null;
+        $tenantColumn=$this->pdo->query("SHOW COLUMNS FROM {$table} LIKE 'tenant_id'")->fetchColumn();
+        return $this->one("SELECT * FROM {$table} WHERE id=?".($tenantColumn?' AND tenant_id=?':'').' LIMIT 1',$tenantColumn?[$id,$this->operations->tenantId()]:[$id]);
+    }
+    private function carrierSnapshot(int $carrierId):array
+    {
+        if ($carrierId < 1) {
+            return [];
+        }
+
+        $row=$this->partyRow('transportadoras',$carrierId);
+        if(is_array($row)&&$row!==[])return$row;
+        $tenantColumn=$this->pdo->query("SHOW COLUMNS FROM clientes LIKE 'tenant_id'")->fetchColumn();
+        $sql="SELECT * FROM clientes WHERE id=? AND (role_carrier=1 OR FIND_IN_SET('transportadora',REPLACE(COALESCE(tipo_pessoa,''),' ',''))>0)".($tenantColumn?' AND tenant_id=?':'').' LIMIT 1';
+        $row=$this->one($sql,$tenantColumn?[$carrierId,$this->operations->tenantId()]:[$carrierId]);
+        if(is_array($row)&&$row!==[])return$row;
+
+        return [];
+    }
     private function payment(string$value):string{$value=strtoupper(trim($value));if(preg_match('/^\d{2}$/',$value))return$value;return match($value){'DINHEIRO'=>'01','CHEQUE'=>'02','CARTAO_CREDITO','CARTÃO DE CRÉDITO','CREDITO'=>'03','CARTAO_DEBITO','CARTÃO DE DÉBITO','DEBITO'=>'04','PIX'=>'17','BOLETO'=>'15','SEM_PAGAMENTO','SEM PAGAMENTO'=>'90',default=>throw new FiscalDanfeException('PREVIEW_PAYMENT_INVALID','Informe uma forma de pagamento fiscal válida no pedido.')};}
     private function purpose(string$value):int{$value=strtoupper(trim($value));if(in_array($value,['1','2','3','4','5','6'],true))return(int)$value;return match($value){'NORMAL'=>1,'COMPLEMENTAR','COMPLEMENTARY'=>2,'AJUSTE','ADJUSTMENT'=>3,'DEVOLUCAO','DEVOLUÇÃO','RETURN'=>4,'NOTA_DE_CREDITO','NOTA DE CRÉDITO','CREDIT'=>5,'NOTA_DE_DEBITO','NOTA DE DÉBITO','DEBIT'=>6,default=>throw new FiscalDanfeException('PREVIEW_PURPOSE_INVALID','Informe uma finalidade fiscal válida no pedido.')};}
 }

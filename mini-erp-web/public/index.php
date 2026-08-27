@@ -97,6 +97,8 @@ if ($secureErpRuntime === null && !empty($pathSegments)) {
 
 // Define qual página de menu está ativa.
 $page = $_GET['page'] ?? 'dashboard';
+$legacyMasterPages=['clientes'=>'cliente','fornecedores'=>'fornecedor','motoristas'=>'motorista','transportadoras'=>'transportadora'];
+if(isset($legacyMasterPages[$page])){$_GET['people_type']=$legacyMasterPages[$page];if(!empty($_GET['edit'])){$_GET['person']=(int)$_GET['edit'];$_GET['source_type']=$legacyMasterPages[$page];}$page='cadastro';$_GET['tab']='pessoas';}
 
 // Armazena mensagens visuais de sucesso ou erro para o usuário.
 $flash = [
@@ -230,16 +232,36 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 $userId = (int)($_SESSION['erp_user_id'] ?? $_SESSION['user_id'] ?? 0);
                 if ($tenantId < 1 || $userId < 1) throw new RuntimeException('Contexto autenticado obrigatório.');
                 if (!in_array((string)($_POST['fiscal_model'] ?? ''), ['55','65'], true)) throw new RuntimeException('FISCAL_DOCUMENT_MODEL_UNSUPPORTED');
+                if (!hash_equals((string)($_SESSION['erp_fiscal_csrf'] ?? ''), (string)($_POST['csrf_token'] ?? ''))) throw new RuntimeException('ORDER_CSRF_INVALID');
                 if (($_POST['tipo'] ?? 'saida') === 'entrada') $_POST['cliente_id'] = $_POST['fornecedor_id'] ?? 0;
                 $operationRepo = new \MiniErp\Repositories\FiscalOperationRepository(Database::getConnection(), $tenantId);
+                $operationRepo->assertOrderParties($_POST);
+                $_POST['operation_nature']=$operationRepo->validatedOperationNature($_POST);
                 $idempotencyKey = (string)($_POST['idempotency_key'] ?? '');
                 if ($_POST['action'] === 'save_internal_fiscal_document' && ($existingDocument = $operationRepo->findDocumentByKey($idempotencyKey))) {
                     $flash['success'] = "Documento fiscal interno #{$existingDocument['id']} já havia sido gravado; nenhuma duplicação ocorreu.";
                     break;
                 }
                 $orderId = (int)($_POST['order_id'] ?? 0);
-                if ($orderId > 0) $operationRepo->updateOrder($orderId, $_POST, $_POST['itens'] ?? []);
-                else $orderId = $operationRepo->createOrder($_POST, $_POST['itens'] ?? [], $userId);
+                $orderId = $operationRepo->saveOrderWithTransport($orderId, $_POST, $_POST['itens'] ?? [], $userId);
+                // O repositório retorna apenas depois do COMMIT da transação externa.
+                // Releia do banco antes de confirmar ao navegador: o redirect nunca pode
+                // anunciar um pedido parcial, de outro tenant ou sem os dados essenciais.
+                $savedOrder = $operationRepo->orderWithTransport($orderId);
+                $expectedPersonId = (int)(($_POST['tipo'] ?? 'saida') === 'entrada'
+                    ? ($_POST['fornecedor_id'] ?? 0)
+                    : ($_POST['cliente_id'] ?? 0));
+                if (
+                    (int)($savedOrder['id'] ?? 0) !== $orderId
+                    || (int)($savedOrder['tenant_id'] ?? 0) !== $tenantId
+                    || (int)($savedOrder['person_id'] ?? 0) !== $expectedPersonId
+                    || empty($savedOrder['items'])
+                    || !isset($savedOrder['grand_total'])
+                    || !in_array((string)($savedOrder['fiscal_model'] ?? ''), ['55', '65'], true)
+                    || empty($savedOrder['operation_date'])
+                ) {
+                    throw new RuntimeException('ORDER_SAVE_READBACK_FAILED');
+                }
                 if ($_POST['action'] === 'save_fiscal_mirror') {
                     $mirrorId = $operationRepo->createMirror($orderId, $userId);
                     $flash['success'] = "Pedido #{$orderId} e Espelho #{$mirrorId} gravados sem emissão fiscal.";
@@ -252,6 +274,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     $flash['success'] = "Documento fiscal interno #{$document['id']} gravado como {$document['status']}; nenhuma NF-e foi emitida.";
                 } else {
                     $flash['success'] = "Pedido #{$orderId} salvo sem baixa de estoque e sem emissão.";
+                }
+                if ($_POST['action'] === 'save_fiscal_order') {
+                    // GRAVAR: salva apenas o pedido comercial, sem criar/alterar documento fiscal,
+                    // e redireciona sempre para a lista operacional de Pedidos Emitidos com highlight.
+                    header('Location: ?page=pedidos&tab=emitidos&highlight_order='.$orderId);
+                    exit;
                 }
                 break;
 
@@ -732,25 +760,30 @@ function navClass(string $pageName, string $currentPage): string
 
 // Detecta as imagens de logo disponíveis no diretório de assets (fallbacks).
 $imagesDir = __DIR__ . '/assets/images';
-$logoUrl = '/assets/images/LOGO.png';
+$assetUrl = static function (string $path): string {
+    $relative = 'assets/' . ltrim($path, '/');
+    $file = __DIR__ . '/' . $relative;
+    return $relative . (is_file($file) ? '?v=' . filemtime($file) : '');
+};
+$logoUrl = $assetUrl('images/LOGO.png');
 $loaderGifUrl = null;
 if (is_dir($imagesDir)) {
     // Preferir o arquivo 'mini-erp-logo.png' (o logo principal enviado),
     // depois o 'logo_login.png' (ícone usado no login), e em seguida outros fallbacks.
     if (file_exists($imagesDir . '/mini-erp-logo.png')) {
-        $logoUrl = '/assets/images/mini-erp-logo.png';
+        $logoUrl = $assetUrl('images/mini-erp-logo.png');
     } elseif (file_exists($imagesDir . '/logo_login.png')) {
-        $logoUrl = '/assets/images/logo_login.png';
+        $logoUrl = $assetUrl('images/logo_login.png');
     } elseif (file_exists($imagesDir . '/LOGO.png')) {
-        $logoUrl = '/assets/images/LOGO.png';
+        $logoUrl = $assetUrl('images/LOGO.png');
     } elseif (file_exists($imagesDir . '/logo.png')) {
-        $logoUrl = '/assets/images/logo.png';
+        $logoUrl = $assetUrl('images/logo.png');
     }
 
     if (file_exists($imagesDir . '/gif_logo.gif')) {
-        $loaderGifUrl = '/assets/images/gif_logo.gif';
+        $loaderGifUrl = $assetUrl('images/gif_logo.gif');
     } elseif (file_exists($imagesDir . '/loader.gif')) {
-        $loaderGifUrl = '/assets/images/loader.gif';
+        $loaderGifUrl = $assetUrl('images/loader.gif');
     }
 }
 
@@ -770,17 +803,17 @@ if (is_dir($imagesDir)) {
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
     <meta name="theme-color" content="#1e88e5">
-    <link rel="stylesheet" href="/assets/style.css">
-    <link rel="stylesheet" href="/assets/issued-orders.css">
-    <link rel="stylesheet" href="/assets/erp-companies.css">
-    <link rel="stylesheet" href="/assets/app-ui.css">
-    <link rel="stylesheet" href="/assets/app-feedback.css">
-    <link rel="stylesheet" href="/assets/ui-forms.css">
-    <link rel="stylesheet" href="/assets/fiscal-notes.css">
+    <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('style.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('issued-orders.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('erp-companies.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('app-ui.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('app-feedback.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('ui-forms.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('fiscal-notes.css')) ?>">
     <script src="https://unpkg.com/feather-icons"></script>
-    <script src="/assets/cnpj-lookup.js" defer></script>
-    <script src="/assets/app-ui.js" defer></script>
-    <script src="/assets/app-feedback.js" defer></script>
+    <script src="<?= htmlspecialchars($assetUrl('cnpj-lookup.js')) ?>" defer></script>
+    <script src="<?= htmlspecialchars($assetUrl('app-ui.js')) ?>" defer></script>
+    <script src="<?= htmlspecialchars($assetUrl('app-feedback.js')) ?>" defer></script>
 </head>
 <body>
     <div id="page-loader" class="page-loader" aria-hidden="false">
@@ -821,9 +854,6 @@ if (is_dir($imagesDir)) {
                             <li><a href="?page=cadastro&tab=pessoas">Pessoas</a></li>
                             <li><a href="?page=cadastro&tab=produtos">Produtos</a></li>
                             <li><a href="?page=cadastro&tab=cfops">CFOPs</a></li>
-                            <li><a href="?page=cadastro&tab=fornecedores">Fornecedores</a></li>
-                            <li><a href="?page=cadastro&tab=motoristas">Motoristas</a></li>
-                            <li><a href="?page=cadastro&tab=transportadoras">Transportadoras</a></li>
                         </ul>
                     </li>
 
@@ -867,9 +897,6 @@ if (is_dir($imagesDir)) {
                                 <a href="?page=cadastro&tab=pessoas">Pessoas</a>
                                 <a href="?page=cadastro&tab=produtos">Produtos</a>
                                 <a href="?page=cadastro&tab=cfops">CFOPs</a>
-                                <a href="?page=cadastro&tab=fornecedores">Fornecedores</a>
-                                <a href="?page=cadastro&tab=motoristas">Motoristas</a>
-                                <a href="?page=cadastro&tab=transportadoras">Transportadoras</a>
                             </div>
                         </div>
                         <div class="menu-item-wrapper">
@@ -928,13 +955,14 @@ if (is_dir($imagesDir)) {
                     ob_start();
                     include __DIR__ . '/fiscal_notes.php';
                     $fiscalNotesDocument = (string) ob_get_clean();
-                    if (preg_match('/(<section class="fiscal-notes-shell">.*?<\/section><\/section>).*?(<dialog id="fiscal-detail-modal".*?<\/dialog>)/s', $fiscalNotesDocument, $fiscalNotesParts)) {
-                        echo $fiscalNotesParts[1], $fiscalNotesParts[2];
+                    if (preg_match('/(<section class="fiscal-notes-shell"[^>]*>.*?<\/section><\/section>).*?(<dialog id="fiscal-detail-modal".*?<\/dialog>).*?(<script type="application\/json" id="fiscal-center-action-state">.*?<\/script>)/s', $fiscalNotesDocument, $fiscalNotesParts)) {
+                        echo $fiscalNotesParts[1], $fiscalNotesParts[2], $fiscalNotesParts[3];
                     } else {
                         echo '<section class="panel"><h2>Central de Notas</h2><p>Não foi possível montar a página. Tente novamente.</p></section>';
                     }
                     ?>
-                    <script src="/assets/fiscal-notes.js"></script>
+                    <script src="<?= htmlspecialchars($assetUrl('fiscal-notes.js')) ?>"></script>
+                    <script src="<?= htmlspecialchars($assetUrl('fiscal-notes-context.js')) ?>"></script>
                     <?php
                     break;
                 case 'company':
@@ -988,7 +1016,7 @@ if (is_dir($imagesDir)) {
                         catch(\Throwable $issuedLoadError){error_log('ISSUED_ORDERS_LOAD_FAILED type='.get_class($issuedLoadError));$issuedLoadMessage='NÃ£o foi possÃ­vel carregar os pedidos emitidos.';}
                         $fiscalOrders=$issuedData['rows'];
                     }else{$fiscalOrders = $fiscalOperationRepo->listOrders($tab === 'entrada' ? 'ENTRY' : 'EXIT');}
-                    $editingOrder = isset($_GET['order_id']) ? $fiscalOperationRepo->order((int)$_GET['order_id']) : null;
+                    $editingOrder = isset($_GET['order_id']) ? $fiscalOperationRepo->orderWithTransport((int)$_GET['order_id']) : null;
                     $previewCompanyModel = '55';
                     if(!empty($erpEstablishment['id'])){
                         try{
@@ -1008,14 +1036,27 @@ if (is_dir($imagesDir)) {
                         $viewDocument['totals']['model'] = $documentOrder['fiscal_model'];
                     }
                     ?>
-                    <section class="page-header">
-                        <div>
-                            <p class="eyebrow">Pedidos</p>
-                            <h2>Pedidos</h2>
+                    <div class="order-page-shell">
+                        <div class="order-page-header">
+                            <div class="order-page-header__crumbs">
+                                <a href="?page=pedidos">Pedidos</a>
+                                <span>›</span>
+                                <span>Novo pedido</span>
+                            </div>
+                            <div class="order-page-header__content">
+                                <div class="order-page-title-wrap">
+                                    <span class="order-page-title-icon" aria-hidden="true">◫</span>
+                                    <div>
+                                        <h1>Novo pedido de venda</h1>
+                                    </div>
+                                </div>
+                                <div class="order-page-actions">
+                                    <?php if($tab!=='emitidos'): ?><button type="button" class="btn btn-secondary" data-order-cancel title="Voltar para Pedidos Emitidos">Cancelar</button><?php endif; ?>
+                                </div>
+                            </div>
                         </div>
-                    </section>
 
-                    <div class="pedido-shell">
+                        <div class="pedido-shell">
                         <?php if ($tab === 'emitidos'): ?>
                             <form class="issued-filters" method="get">
                                 <input type="hidden" name="page" value="pedidos"><input type="hidden" name="tab" value="emitidos">
@@ -1033,7 +1074,9 @@ if (is_dir($imagesDir)) {
                                 <div class="panel"><h2>ESPELHO DO PEDIDO #<?= (int)$viewMirror['source_order_id'] ?> — versão <?= (int)$viewMirror['snapshot_version'] ?></h2><p class="message warning">Este é um Espelho interno e não possui valor fiscal.</p><p>Criado em <?= htmlspecialchars($viewMirror['created_at']) ?> por usuário #<?= (int)$viewMirror['created_by'] ?></p><p>Total: <?= formatCurrency((float)($snap['grand_total']??0)) ?></p><table><thead><tr><th>Produto</th><th>Quantidade</th><th>Preço</th><th>Total</th></tr></thead><tbody><?php foreach(($snap['items']??[]) as $i): ?><tr><td><?= htmlspecialchars($i['nome']??'') ?></td><td><?= htmlspecialchars((string)$i['quantity']) ?></td><td><?= formatCurrency((float)$i['unit_price']) ?></td><td><?= formatCurrency((float)$i['net_total']) ?></td></tr><?php endforeach; ?></tbody></table><button class="btn secondary" onclick="window.print()">Imprimir Espelho</button></div>
                             <?php elseif ($viewDocument): renderFiscalPreview($viewDocument); ?>
                                 <div class="panel"><h2>Documento Fiscal Interno v<?= (int)$viewDocument['document_version'] ?></h2><p class="message warning">Documento fiscal interno — ainda não transmitido à SEFAZ.</p><span class="status-badge"><?= htmlspecialchars($viewDocument['status']) ?></span><?php if($viewDocument['status']==='FISCAL_READY'): ?><p>Pronto para futura geração do XML.</p><?php endif; ?><h3>Pendências</h3><ul><?php foreach($viewDocument['pending'] as $p): ?><li><?= htmlspecialchars($p) ?></li><?php endforeach; ?></ul><h3>Emitente snapshot</h3><pre><?= htmlspecialchars(json_encode($viewDocument['issuer_snapshot'],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)) ?></pre><h3>Destinatário snapshot</h3><pre><?= htmlspecialchars(json_encode($viewDocument['recipient_snapshot'],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)) ?></pre><h3>Itens e tributação</h3><?php foreach($viewDocument['items'] as $i): ?><pre><?= htmlspecialchars(json_encode(['produto'=>json_decode($i['product_snapshot_json'],true),'tributacao'=>json_decode($i['tax_resolution_json']?:'null',true)],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)) ?></pre><?php endforeach; ?><h3>Totais / Pagamento / Transporte</h3><pre><?= htmlspecialchars(json_encode(['totais'=>$viewDocument['totals'],'pagamento'=>$viewDocument['payment_snapshot'],'transporte'=>$viewDocument['transport_snapshot']],JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE)) ?></pre></div>
-                            <?php else: ?><div class="emitted-table-wrap" data-issued-orders data-csrf="<?= htmlspecialchars((string)($_SESSION['erp_fiscal_csrf']??'')) ?>">
+                            <?php else: ?><?php $savedOrderId=max(0,(int)($_GET['highlight_order']??$_GET['saved_order']??0)); ?>
+                            <?php if($savedOrderId>0): ?><div class="message success">Pedido #<?= $savedOrderId ?> salvo. Ele já está disponível na lista operacional abaixo.</div><?php endif; ?>
+                            <div class="emitted-table-wrap" data-issued-orders data-csrf="<?= htmlspecialchars((string)($_SESSION['erp_fiscal_csrf']??'')) ?>">
                                 <?php if(!empty($issuedLoadMessage)): ?><div class="message error"><?= htmlspecialchars($issuedLoadMessage) ?></div><?php endif; ?>
                                 <table class="emitted-table">
                                     <thead>
@@ -1048,7 +1091,7 @@ if (is_dir($imagesDir)) {
                                     <tbody>
                                         <?php foreach ($fiscalOrders as $v): ?>
                                             <?php $editTab=$v['operation_type']==='ENTRY'?'entrada':'saida';$locked=!empty($v['reservation_id']); ?>
-                                            <tr class="issued-row" tabindex="0" data-edit-url="?page=pedidos&amp;tab=<?= $editTab ?>&amp;order_id=<?= (int)$v['id'] ?>">
+                                            <tr class="issued-row<?= $savedOrderId===(int)$v['id']?' is-highlighted':'' ?>" tabindex="0" data-edit-url="?page=pedidos&amp;tab=<?= $editTab ?>&amp;order_id=<?= (int)$v['id'] ?>">
                                                 <td data-label="Pedido"><strong>#<?= (int)$v['id'] ?></strong><small><?= htmlspecialchars((string)($v['internal_code']??'')) ?></small></td>
                                                 <td data-label="Data"><?= htmlspecialchars(date('d/m/Y', strtotime($v['operation_date']))) ?></td>
                                                 <td data-label="Cliente / fornecedor"><?= htmlspecialchars($v['person_name']) ?></td>
@@ -1070,41 +1113,112 @@ if (is_dir($imagesDir)) {
                             </div>
                             <dialog id="issued-delete-modal" class="app-modal"><div class="app-modal__surface"><header class="app-modal__header"><h2>Excluir pedido?</h2><button type="button" data-app-modal-close aria-label="Fechar">×</button></header><div class="app-modal__body"><p>Esta ação excluirá somente um pedido sem vínculo fiscal.</p><strong data-issued-delete-label></strong></div><footer class="app-modal__footer"><button class="btn secondary" type="button" data-app-modal-close>Cancelar</button><button class="btn danger" type="button" data-confirm-issued-delete>Excluir pedido</button></footer></div></dialog>
                             <!-- Contrato legado preservado: data-danfe-preview / Prévia DANFE. A lista usa o fluxo POST seguro acima. -->
-                            <script src="/assets/issued-orders.js"></script><?php endif; ?>
+                            <script src="<?= htmlspecialchars($assetUrl('issued-orders.js')) ?>"></script><?php endif; ?>
                         <?php else: ?>
+                            <?php
+                            $orderDirection=$tab==='entrada'?'ENTRY':'EXIT';
+                            $applicableCfops=array_values(array_filter($cfops,static function(array$cf)use($orderDirection):bool{if(($cf['status']??'ativo')!=='ativo')return false;$code=preg_replace('/\D/','',(string)($cf['codigo']??''));return$orderDirection==='ENTRY'?in_array($code[0]??'',['1','2','3'],true):in_array($code[0]??'',['5','6','7'],true);}));
+                            $currentNature=trim((string)($editingOrder['operation_nature']??''));$selectedCfopId=0;foreach($applicableCfops as$cf)if(trim((string)($cf['descricao']??''))===$currentNature){$selectedCfopId=(int)$cf['id'];break;}
+                            ?>
                             <form method="POST" id="pedido-form" class="pedido-form">
+                                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars((string)($_SESSION['erp_fiscal_csrf'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
                                 <input type="hidden" name="tipo" value="<?= $tab ?>">
                                 <input type="hidden" name="order_id" value="<?= (int)($editingOrder['id'] ?? 0) ?>">
                                 <input type="hidden" name="establishment_id" value="<?= (int)($erpEstablishment['id'] ?? 0) ?>">
                                 <input type="hidden" name="idempotency_key" value="<?= hash('sha256', session_id() . '|' . bin2hex(random_bytes(16))) ?>">
 
-                                <div class="pedido-section">
-                                    <div class="section-grid fields-row">
-                                        <div class="field-wrap"><label>Natureza da Operação</label><input type="text" name="operation_nature" value="<?= htmlspecialchars($editingOrder['operation_nature'] ?? 'Venda de mercadoria') ?>"></div>
-                                        <div class="field-wrap"><label>Modelo do documento fiscal</label><select name="fiscal_model" id="fiscal-model-select"><option value="55"<?= $previewSelectedModel==='55'?' selected':'' ?>>55 — NF-e</option><option value="65"<?= $previewSelectedModel==='65'?' selected':'' ?>>65 — NFC-e</option></select><small>55 — NF-e / DANFE A4 · 65 — NFC-e / DANFC-e cupom</small></div>
-                                        <div class="field-wrap"><label>Finalidade</label><select name="purpose"><option value="NORMAL">Normal</option><option value="RETURN">Devolução</option></select></div>
-                                        <div class="field-wrap"><label>Presença</label><select name="presence_indicator"><option value="1">1 — Presencial</option><option value="2">2 — Internet</option><option value="9">9 — Outros</option></select></div>
-                                        <label class="checkbox-inline"><input type="checkbox" name="final_consumer" value="1"> Consumidor final</label>
+                                <div class="pedido-section order-card">
+                                    <div class="section-head">
+                                        <div>
+                                            <p class="eyebrow">Operação fiscal</p>
+                                            <h3>Defina a natureza da operação e as informações fiscais do documento.</h3>
+                                        </div>
                                     </div>
-                                    <div class="section-grid fields-row">
-                                        <div class="field-wrap">
-                                            <label>Código Interno</label>
-                                            <input type="text" name="codigo_interno" placeholder="Código">
+                                    <div class="order-grid order-grid--fiscal">
+                                        <div class="order-field order-field--nature">
+                                            <label>Natureza da operação</label>
+                                            <select name="operation_nature" data-order-nature required>
+                                                <option value="">Selecione o CFOP</option>
+                                                <?php foreach($applicableCfops as$cf):$nature=trim((string)($cf['descricao']??'')); ?><option value="<?= htmlspecialchars($nature) ?>" data-cfop-id="<?= (int)$cf['id'] ?>"<?= $selectedCfopId===(int)$cf['id']?' selected':'' ?>><?= htmlspecialchars($nature) ?></option><?php endforeach; ?>
+                                                <?php if($currentNature!==''&&$selectedCfopId===0): ?><option value="<?= htmlspecialchars($currentNature) ?>" selected disabled>Legado — <?= htmlspecialchars($currentNature) ?></option><?php endif; ?>
+                                            </select>
                                         </div>
-                                        <div class="field-wrap">
-                                            <label>Data</label>
-                                            <input type="date" name="data_venda" value="<?= htmlspecialchars($editingOrder['operation_date'] ?? date('Y-m-d')) ?>">
+                                        <div class="order-field order-field--model">
+                                            <label>Modelo fiscal pretendido</label>
+                                            <select name="fiscal_model" id="fiscal-model-select"><option value="55"<?= $previewSelectedModel==='55'?' selected':'' ?>>55 — NF-e / DANFE A4</option><option value="65"<?= $previewSelectedModel==='65'?' selected':'' ?>>65 — NFC-e / DANFC-e cupom</option></select>
                                         </div>
-                                        <div class="field-wrap">
-                                            <label>Cliente / Pessoa</label>
-                                            <select name="cliente_id" <?= $tab === 'saida' ? 'required' : '' ?>>
-                                                <option value="">Selecione um Cliente</option>
-                                                <?php foreach ($clientes as $c): ?>
-                                                    <option value="<?= (int)$c['id'] ?>" <?= (int)($editingOrder['person_id'] ?? 0) === (int)$c['id'] ? 'selected' : '' ?>><?= htmlspecialchars($c['nome']) ?></option>
+                                        <div class="order-field order-field--purpose">
+                                            <label>Finalidade</label>
+                                            <select name="purpose"><option value="NORMAL">Normal</option><option value="RETURN">Devolução</option></select>
+                                        </div>
+                                        <div class="order-field order-field--presence">
+                                            <label>Presença</label>
+                                            <select name="presence_indicator"><option value="1">1 — Presencial</option><option value="2">2 — Internet</option><option value="9">9 — Outros</option></select>
+                                        </div>
+                                    </div>
+                                    <div class="order-grid order-grid--fiscal-footer">
+                                        <div class="order-field order-field--cfop">
+                                            <label>CFOP</label>
+                                            <select name="cfop_id" data-order-cfop required>
+                                                <option value="">Selecione CFOP</option>
+                                                <?php foreach ($applicableCfops as $cf): ?>
+                                                    <option value="<?= (int)$cf['id'] ?>" data-nature="<?= htmlspecialchars(trim((string)($cf['descricao']??''))) ?>"<?= $selectedCfopId===(int)$cf['id']?' selected':'' ?>><?= htmlspecialchars(($cf['codigo'] ?? '') . ' - ' . ($cf['descricao'] ?? '')) ?></option>
                                                 <?php endforeach; ?>
                                             </select>
                                         </div>
-                                        <div class="field-wrap">
+                                        <div class="order-field order-field--toggle">
+                                            <label class="switch-field">
+                                                <span>Consumidor final</span>
+                                                <span class="switch-control" role="switch" aria-checked="false" tabindex="0">
+                                                    <input type="checkbox" name="final_consumer" value="1" class="switch-input" aria-label="Consumidor final">
+                                                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                                                    <span class="switch-state">Não</span>
+                                                </span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="pedido-section order-card">
+                                    <div class="section-head">
+                                        <div>
+                                            <p class="eyebrow">Dados do pedido</p>
+                                            <h3>Informações do documento e do cliente.</h3>
+                                        </div>
+                                    </div>
+                                    <div class="order-grid order-grid--customer">
+                                        <div class="order-field order-field--client">
+                                            <label>Cliente / Pessoa</label>
+                                            <div class="search-select-wrap">
+                                                <span class="search-select-icon" aria-hidden="true">⌕</span>
+                                                <select name="cliente_id" class="customer-select" <?= $tab === 'saida' ? 'required' : '' ?>>
+                                                    <option value="">Pesquisar cliente por nome, CPF ou CNPJ...</option>
+                                                    <?php foreach ($clientes as $c): ?>
+                                                        <option value="<?= (int)$c['id'] ?>" <?= (int)($editingOrder['person_id'] ?? 0) === (int)$c['id'] ? 'selected' : '' ?>><?= htmlspecialchars($c['nome']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                            <?php if (!empty($editingOrder['person_id'])): ?>
+                                                <?php $selectedClient = null; foreach ($clientes as $c) { if ((int)$c['id'] === (int)($editingOrder['person_id'] ?? 0)) { $selectedClient = $c; break; } } ?>
+                                                <?php if ($selectedClient): ?>
+                                                    <div class="selected-customer-summary">
+                                                        <strong><?= htmlspecialchars($selectedClient['nome']) ?></strong>
+                                                        <span>CPF/CNPJ: <?= htmlspecialchars($selectedClient['cpf_cnpj'] ?? '-') ?></span>
+                                                    </div>
+                                                <?php endif; ?>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div class="order-field order-field--date">
+                                            <label>Data do pedido</label>
+                                            <div class="date-wrap">
+                                                <input type="date" name="data_venda" value="<?= htmlspecialchars($editingOrder['operation_date'] ?? date('Y-m-d')) ?>">
+                                            </div>
+                                        </div>
+                                        <div class="order-field order-field--code">
+                                            <label>Código interno</label>
+                                            <input type="text" name="codigo_interno" placeholder="Ex.: 000123">
+                                        </div>
+                                        <div class="order-field order-field--seller">
                                             <label>Vendedor</label>
                                             <select name="vendedor_id">
                                                 <option value="">Sem vendedor</option>
@@ -1114,43 +1228,72 @@ if (is_dir($imagesDir)) {
                                             </select>
                                         </div>
                                     </div>
+                                </div>
 
-                                    <div class="section-grid fields-row">
-                                        <div class="field-wrap">
-                                            <label>Fornecedor</label>
-                                            <select name="fornecedor_id" <?= $tab === 'entrada' ? 'required' : '' ?>>
-                                                <option value="">Selecione um fornecedor</option>
-                                                <?php foreach ($fornecedores as $f): ?>
-                                                    <option value="<?= (int)$f['id'] ?>"><?= htmlspecialchars($f['nome']) ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
+                                <div class="pedido-section order-card logistics-card" id="logistics-card">
+                                    <div class="section-head">
+                                        <div>
+                                            <p class="eyebrow">Logística e transporte</p>
+                                            <h3>Informações de fornecedor, transporte e responsáveis pela entrega.</h3>
                                         </div>
-                                        <div class="field-wrap">
-                                            <label>Transportadora</label>
-                                            <select name="transportadora_id">
-                                                <option value="">Selecione uma transportadora</option>
-                                                <?php foreach ($transportadoras as $t): ?>
-                                                <option value="<?= (int)$t['id'] ?>" <?= (int)($editingOrder['carrier_id'] ?? 0) === (int)$t['id'] ? 'selected' : '' ?>><?= htmlspecialchars($t['nome']) ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
+                                        <button type="button" class="order-collapse-toggle" data-collapse-target="logistics-body" aria-expanded="true">
+                                            <span>Recolher</span>
+                                            <span class="collapse-icon" aria-hidden="true">↑</span>
+                                        </button>
+                                    </div>
+                                    <div class="logistics-body" id="logistics-body">
+                                        <div class="order-grid order-grid--logistics">
+                                            <div class="order-field">
+                                                <label>Modalidade do frete</label>
+                                                <?php $selectedFreightMode=(string)($editingOrder['freight_mode']??'9'); ?>
+                                                <select name="freight_mode">
+                                                    <?php foreach(['0'=>'0 — Emitente','1'=>'1 — Destinatário','2'=>'2 — Terceiros','3'=>'3 — Próprio emitente','4'=>'4 — Próprio destinatário','9'=>'9 — Sem transporte']as$code=>$label): ?>
+                                                        <option value="<?= $code ?>"<?= $selectedFreightMode===$code?' selected':'' ?>><?= htmlspecialchars($label) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                            <div class="order-field">
+                                                <label>Fornecedor</label>
+                                                <select name="fornecedor_id" <?= $tab === 'entrada' ? 'required' : '' ?>>
+                                                    <option value="">Selecione um fornecedor</option>
+                                                    <?php foreach ($fornecedores as $f): ?>
+                                                        <option value="<?= (int)$f['id'] ?>"><?= htmlspecialchars($f['nome']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                            <div class="order-field">
+                                                <label>Transportadora</label>
+                                                <select name="transportadora_id">
+                                                    <option value="">Selecione uma transportadora</option>
+                                                    <?php foreach ($transportadoras as $t): ?>
+                                                    <option value="<?= (int)$t['id'] ?>" <?= (int)($editingOrder['carrier_id'] ?? 0) === (int)$t['id'] ? 'selected' : '' ?>><?= htmlspecialchars($t['nome']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                            <div class="order-field">
+                                                <label>Motorista</label>
+                                                <select name="motorista_id">
+                                                    <option value="">Selecione um motorista</option>
+                                                    <?php foreach ($motoristas as $m): ?>
+                                                    <option value="<?= (int)$m['id'] ?>" <?= (int)($editingOrder['driver_id'] ?? 0) === (int)$m['id'] ? 'selected' : '' ?>><?= htmlspecialchars($m['nome']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
                                         </div>
-                                        <div class="field-wrap">
-                                            <label>Motorista</label>
-                                            <select name="motorista_id">
-                                                <option value="">Selecione um motorista</option>
-                                                <?php foreach ($motoristas as $m): ?>
-                                                <option value="<?= (int)$m['id'] ?>" <?= (int)($editingOrder['driver_id'] ?? 0) === (int)$m['id'] ? 'selected' : '' ?>><?= htmlspecialchars($m['nome']) ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
+                                        <h4>Veículo</h4>
+                                        <div class="order-grid order-grid--logistics">
+                                            <div class="order-field"><label>Placa</label><input name="vehicle_plate" maxlength="10" value="<?= htmlspecialchars((string)($editingOrder['vehicle_plate']??'')) ?>"></div>
+                                            <div class="order-field"><label>UF</label><input name="vehicle_state" maxlength="2" value="<?= htmlspecialchars((string)($editingOrder['vehicle_state']??'')) ?>"></div>
+                                            <div class="order-field"><label>RNTC / ANTT</label><input name="vehicle_rntc" maxlength="20" value="<?= htmlspecialchars((string)($editingOrder['vehicle_rntc']??'')) ?>"></div>
                                         </div>
-                                        <div class="field-wrap">
-                                            <label>CFOP</label>
-                                            <select name="cfop_id">
-                                                <option value="">Selecione CFOP</option>
-                                                <?php foreach ($cfops as $cf): ?>
-                                                    <option value="<?= (int)$cf['id'] ?>"><?= htmlspecialchars(($cf['codigo'] ?? '') . ' - ' . ($cf['descricao'] ?? '')) ?></option>
-                                                <?php endforeach; ?>
-                                            </select>
+                                        <h4>Volumes</h4>
+                                        <div class="order-grid order-grid--logistics">
+                                            <div class="order-field"><label>Quantidade</label><input type="number" name="volume_quantity" min="0" step="1" value="<?= htmlspecialchars((string)($editingOrder['volume_quantity']??'')) ?>"></div>
+                                            <div class="order-field"><label>Espécie</label><input name="volume_species" maxlength="60" value="<?= htmlspecialchars((string)($editingOrder['volume_species']??'')) ?>"></div>
+                                            <div class="order-field"><label>Marca</label><input name="volume_brand" maxlength="60" value="<?= htmlspecialchars((string)($editingOrder['volume_brand']??'')) ?>"></div>
+                                            <div class="order-field"><label>Numeração</label><input name="volume_numbering" maxlength="60" value="<?= htmlspecialchars((string)($editingOrder['volume_numbering']??'')) ?>"></div>
+                                            <div class="order-field"><label>Peso bruto</label><input name="gross_weight" inputmode="decimal" placeholder="0,000" value="<?= htmlspecialchars((string)($editingOrder['gross_weight']??'')) ?>"></div>
+                                            <div class="order-field"><label>Peso líquido</label><input name="net_weight" inputmode="decimal" placeholder="0,000" value="<?= htmlspecialchars((string)($editingOrder['net_weight']??'')) ?>"></div>
                                         </div>
                                     </div>
                                 </div>
@@ -1242,21 +1385,55 @@ if (is_dir($imagesDir)) {
                                     </div>
                                 </div>
 
-                                <div class="form-actions form-actions-footer">
-                                    <button class="btn primary" type="submit" name="action" value="save_fiscal_order">Salvar Pedido</button>
-                                    <button class="btn secondary" type="submit" data-fiscal-action="preview" id="fiscal-preview-submit"><?= $previewSelectedModel==='65'?'Prévia DANFC-e':'Prévia DANFE' ?></button>
-                                    <button class="btn secondary" type="submit" name="action" value="save_internal_fiscal_document" data-fiscal-action="note">Gravar Nota</button>
-                                    <button class="btn secondary" type="submit" name="action" value="save_fiscal_mirror" data-fiscal-action="mirror" title="Prévia administrativa: não reserva número e não gera DANFE">Salvar prévia interna</button>
-                                    <button class="btn secondary" type="button">Financeiro</button>
-                                    <button class="btn secondary" type="button" onclick="window.print()">Imprimir Pedido</button>
-                                    <button class="btn secondary" type="button" disabled title="Task futura">Importar de Outra Empresa</button>
-                                    <a class="btn secondary" href="?page=pedidos&tab=<?= urlencode($tab) ?>">Nova</a>
+                                <div class="order-action-bar" role="toolbar" aria-label="Rotinas do pedido" data-order-action-bar>
+                                    <button class="order-routine order-routine--primary" type="submit" name="action" value="save_fiscal_order" data-order-action="save" title="Gravar pedido" aria-label="Gravar pedido"><span class="order-routine__icon" aria-hidden="true">▣</span><span>Gravar</span></button>
+                                    <button class="order-routine" type="submit" data-fiscal-action="finalize" data-order-action="note" title="Salvar e preparar documento interno na Central de Notas" aria-label="Preparar nota"><span class="order-routine__icon" aria-hidden="true">▤</span><span>Nota</span></button>
+                                    <button class="order-routine" type="button" disabled title="Financeiro será integrado ao módulo de contas e estoque." aria-label="Financeiro — em breve"><span class="order-routine__icon" aria-hidden="true">$</span><span>Financeiro</span><small>Em breve</small></button>
+                                    <button id="fiscal-preview-submit" class="order-routine" type="submit" data-fiscal-action="preview" data-order-action="print" title="Gerar espelho do pedido em uma nova guia" aria-label="Imprimir pedido"><span class="order-routine__icon" aria-hidden="true">▧</span><span>Imprimir Pedido</span></button>
+                                    <?php if($tab==='entrada'): ?><button class="order-routine" type="button" disabled title="Importação de XML estará disponível em breve." aria-label="Importar XML — em breve"><span class="order-routine__icon" aria-hidden="true">⇧</span><span>Importar XML</span><small>Em breve</small></button><?php endif; ?>
+                                    <button class="order-routine" type="button" data-order-new data-new-url="?page=pedidos&amp;tab=<?= urlencode($tab) ?>" title="Iniciar novo pedido" aria-label="Novo pedido"><span class="order-routine__icon" aria-hidden="true">＋</span><span>Nova</span></button>
                                 </div>
+                                <div class="order-action-feedback" role="status" aria-live="polite" hidden></div>
 
                             </form>
 
                             <script>
-                            (()=>{const form=document.querySelector('#pedido-form');if(!form)return;const buttons=[...form.querySelectorAll('[data-fiscal-action]')];let clicked=null;buttons.forEach(b=>b.addEventListener('click',()=>clicked=b));form.addEventListener('submit',async e=>{if(!clicked)return;e.preventDefault();const pdfWindow=window.open('','_blank');if(pdfWindow)pdfWindow.document.write('<!doctype html><title>Processando</title><p style="font:16px sans-serif;padding:30px">Processando documento fiscal...</p>');buttons.forEach(b=>b.disabled=true);const old=clicked.textContent;clicked.textContent='Processando...';const data=new FormData(form);data.set('fiscal_action',clicked.dataset.fiscalAction);try{const response=await fetch('/fiscal_action.php',{method:'POST',body:data,credentials:'same-origin',headers:{Accept:'application/json'}});const result=await response.json();if(result.success){if(pdfWindow&&result.danfe_url)pdfWindow.location=result.danfe_url;else if(pdfWindow)pdfWindow.close();location.href=result.notes_url||'/?page=pedidos&tab=emitidos';return;}if(pdfWindow)pdfWindow.close();alert((result.error_code?result.error_code+': ':'')+(result.error_message||'Falha no processamento fiscal.'));if(result.notes_url)location.href=result.notes_url;}catch(error){if(pdfWindow)pdfWindow.close();alert('Não foi possível processar o documento. Os dados do formulário foram preservados.');buttons.forEach(b=>b.disabled=false);clicked.textContent=old;}finally{clicked=null;}});})();
+                            (()=>{
+                                const form=document.querySelector('#pedido-form');if(!form)return;
+                                const feedback=document.querySelector('.order-action-feedback');
+                                const cfop=form.querySelector('[data-order-cfop]'),nature=form.querySelector('[data-order-nature]');
+                                const syncNature=()=>{const option=cfop?.selectedOptions[0];if(nature&&option){nature.value=option.dataset.nature||'';nature.dispatchEvent(new Event('change',{bubbles:true}));}};
+                                cfop?.addEventListener('change',syncNature);nature?.addEventListener('change',()=>{const selected=nature.selectedOptions[0];if(selected?.dataset.cfopId&&cfop)cfop.value=selected.dataset.cfopId;});
+                                const initial=new URLSearchParams(new FormData(form)).toString();
+                                const isDirty=()=>new URLSearchParams(new FormData(form)).toString()!==initial;
+                                const confirmLeave=()=>!isDirty()||window.confirm('Existem alterações não salvas. Deseja iniciar um novo pedido?');
+                                const showError=message=>{if(!feedback)return;feedback.hidden=false;feedback.className='order-action-feedback message error';feedback.textContent=message;feedback.scrollIntoView({block:'nearest'});};
+                                document.querySelector('[data-order-new]')?.addEventListener('click',event=>{if(confirmLeave())location.href=event.currentTarget.dataset.newUrl;});
+                                document.querySelector('[data-order-cancel]')?.addEventListener('click',()=>{if(confirmLeave())location.href='?page=pedidos&tab=emitidos';});
+                                const fiscalModelSelect=document.getElementById('fiscal-model-select');const fiscalPreviewSubmit=document.getElementById('fiscal-preview-submit');
+                                function syncFiscalPreviewLabel(){if(fiscalPreviewSubmit&&fiscalModelSelect)fiscalPreviewSubmit.textContent=fiscalModelSelect.value==='65'?'Prévia DANFC-e':'Prévia DANFE';}
+                                fiscalModelSelect?.addEventListener('change',syncFiscalPreviewLabel);syncFiscalPreviewLabel();
+                                form.addEventListener('submit',async event=>{
+                                    const submitter=event.submitter;if(!(submitter instanceof HTMLButtonElement))return;
+                                    if(submitter.dataset.orderAction==='save'){
+                                        if(submitter.dataset.busy==='1'){event.preventDefault();return;}
+                                        submitter.dataset.busy='1';const label=submitter.querySelector('span:last-of-type');if(label)label.textContent='Salvando...';setTimeout(()=>submitter.disabled=true,0);return;
+                                    }
+                                    const fiscalAction=submitter.dataset.fiscalAction;if(!fiscalAction)return;
+                                    event.preventDefault();if(submitter.dataset.busy==='1')return;submitter.dataset.busy='1';submitter.disabled=true;
+                                    const label=submitter.querySelector('span:last-of-type');const oldLabel=label?.textContent||'';if(label)label.textContent=fiscalAction==='preview'?'Gerando prévia...':'Preparando nota...';
+                                    let previewWindow=null;if(fiscalAction==='preview'){previewWindow=window.open('','_blank');if(previewWindow)previewWindow.document.write('<!doctype html><meta charset="utf-8"><title>Gerando prévia</title><p style="font:16px sans-serif;padding:30px">Gerando prévia do pedido...</p>');}
+                                    const data=new FormData(form);data.set('fiscal_action',fiscalAction);data.set('idempotency_key',form.querySelector('[name="idempotency_key"]')?.value||'');
+                                    try{
+                                        const response=await fetch('fiscal_action.php',{method:'POST',body:data,credentials:'same-origin',headers:{Accept:'application/json'}});const result=await response.json();
+                                        if(!response.ok||!result.success)throw Object.assign(new Error(result.error_message||'Não foi possível concluir a rotina.'),{notesUrl:result.notes_url});
+                                        const orderField=form.querySelector('[name="order_id"]');if(orderField&&result.order_id)orderField.value=String(result.order_id);
+                                        if(fiscalAction==='preview'){if(previewWindow&&result.danfe_url)previewWindow.location.href=result.danfe_url;else if(previewWindow)previewWindow.close();return;}
+                                        if(previewWindow)previewWindow.close();location.href=result.notes_url||'?page=fiscal_notes';
+                                    }catch(error){if(previewWindow){previewWindow.document.body.innerHTML='<p style="font:16px sans-serif;padding:30px">Não foi possível gerar a prévia. Volte ao ERP, revise os dados e tente novamente.</p>';}showError(error.message||'Não foi possível concluir. Os dados foram preservados.');if(error.notesUrl&&fiscalAction!=='preview')location.href=error.notesUrl;}
+                                    finally{submitter.dataset.busy='0';submitter.disabled=false;if(label)label.textContent=oldLabel;}
+                                });
+                            })();
                             </script>
 
                             <script>
@@ -1285,6 +1462,7 @@ if (is_dir($imagesDir)) {
                                 <!-- preenchido por JS -->
                             </div>
                         </div>
+                    </div>
                     </div>
                     <?php
                     break;
@@ -2832,6 +3010,6 @@ if (is_dir($imagesDir)) {
             ?>
         </main>
     </div>
+    <script src="<?= htmlspecialchars($assetUrl('app.js')) ?>"></script>
 </body>
 </html>
-<script src="/assets/app.js"></script>

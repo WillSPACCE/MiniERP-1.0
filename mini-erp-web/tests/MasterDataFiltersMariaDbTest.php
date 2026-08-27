@@ -1,0 +1,12 @@
+<?php
+declare(strict_types=1);
+require __DIR__.'/../vendor/autoload.php';require __DIR__.'/helpers/ExistingTenantFixture.php';
+use MiniErp\Repositories\MasterDataDirectoryRepository;
+function filter48(bool $ok,string $message):void{if(!$ok)throw new RuntimeException($message);}
+[$tenant]=existingTenantPair();$cfg=require __DIR__.'/../config.php';$d=$cfg['db'];$pdo=new PDO("mysql:host={$d['host']};port={$d['port']};dbname={$tenant['db']};charset=utf8mb4",$d['username'],$d['password'],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);$directory=new MasterDataDirectoryRepository($pdo,$tenant['id']);
+$people=$directory->people([],1,10);filter48(isset($people['rows'],$people['total'],$people['page'],$people['pages'],$people['per_page']),'people pagination envelope');filter48(count($people['rows'])<=10,'people server pagination');
+foreach(['fornecedor','motorista','transportadora'] as $role){$page=$directory->people(['type'=>$role],1,100);foreach($page['rows'] as $row)filter48(in_array($role,array_filter(explode(',',str_replace(', ', ',',(string)$row['roles']))),true),'people role filter '.$role);}
+$products=$directory->products([],1,10);filter48(count($products['rows'])<=10,'product server pagination');if($products['rows']){$row=$products['rows'][0];$term=trim((string)($row['codigo']??$row['nome']??''));if($term!=='')filter48($directory->products(['q'=>$term],1,10)['total']>=1,'product text search');$category=trim((string)($row['categoria']??''));if($category!=='')foreach($directory->products(['category'=>$category],1,100)['rows'] as $item)filter48((string)$item['categoria']===$category,'product category filter');}
+foreach(['entrada'=>['1','2','3'],'saida'=>['5','6','7']] as $direction=>$prefixes)foreach($directory->cfops(['direction'=>$direction],1,100)['rows'] as $row)filter48(in_array(substr((string)$row['codigo'],0,1),$prefixes,true),'CFOP direction '.$direction);
+$before=$pdo->query("SELECT COALESCE(SUM(TABLE_ROWS),0) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()")->fetchColumn();$directory->people(['q'=>'TEST_ONLY_NO_MATCH_48'],1,25);$after=$pdo->query("SELECT COALESCE(SUM(TABLE_ROWS),0) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE()")->fetchColumn();filter48((string)$before===(string)$after,'filter test performs no writes');
+echo "MasterDataFiltersMariaDbTest OK (tenant {$tenant['id']}; read-only)\n";

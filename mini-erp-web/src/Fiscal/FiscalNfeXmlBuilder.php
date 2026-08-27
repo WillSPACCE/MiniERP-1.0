@@ -60,7 +60,44 @@ final class FiscalNfeXmlBuilder
         if ($vDesc !== null) $icms['vDesc'] = $vDesc;
         if ($vOutro !== null) $icms['vOutro'] = $vOutro;
         $make->tagICMSTot((object)$icms);
-        $make->tagtransp((object)['modFrete'=>$dto->transport['freight_mode']??9]);$make->tagpag((object)['vTroco'=>$dto->payment['change']??null]);
+        $make->tagtransp((object)['modFrete'=>$dto->transport['freight_mode']??9]);
+        $carrier = is_array($dto->transport['carrier'] ?? null) ? $dto->transport['carrier'] : [];
+        if ($carrier !== []) {
+            $carrierName = trim((string)($carrier['nome'] ?? $carrier['legal_name'] ?? $carrier['xNome'] ?? ''));
+            $carrierDoc = preg_replace('/\D/', '', (string)($carrier['cpf_cnpj'] ?? $carrier['tax_id'] ?? $carrier['document'] ?? ''));
+            $carrierIe = trim((string)($carrier['inscricao_estadual'] ?? $carrier['state_registration'] ?? $carrier['IE'] ?? ''));
+            $carrierStreet = trim((string)($carrier['logradouro'] ?? $carrier['street'] ?? $carrier['endereco'] ?? $carrier['xEnder'] ?? ''));
+            $carrierNumber = trim((string)($carrier['numero'] ?? $carrier['number'] ?? ''));
+            if ($carrierNumber !== '') {
+                $carrierStreet = $carrierStreet !== '' ? $carrierStreet . ', ' . $carrierNumber : $carrierNumber;
+            }
+            $carrierCity = trim((string)($carrier['municipio'] ?? $carrier['city_name'] ?? $carrier['cidade'] ?? $carrier['xMun'] ?? ''));
+            $carrierUf = strtoupper(trim((string)($carrier['uf'] ?? $carrier['state'] ?? $carrier['UF'] ?? '')));
+            if ($carrierName !== '') {
+                $transportStd = ['xNome' => $carrierName];
+                if (strlen($carrierDoc) === 14) $transportStd['CNPJ'] = $carrierDoc;
+                elseif (strlen($carrierDoc) === 11) $transportStd['CPF'] = $carrierDoc;
+                if ($carrierIe !== '') $transportStd['IE'] = $carrierIe;
+                if ($carrierStreet !== '') $transportStd['xEnder'] = $carrierStreet;
+                if ($carrierCity !== '') $transportStd['xMun'] = $carrierCity;
+                if ($carrierUf !== '') $transportStd['UF'] = $carrierUf;
+                if (count($transportStd) > 1) {
+                    $make->tagtransporta((object)$transportStd);
+                }
+            }
+        }
+        if ($dto->model === '55') {
+            $vehicle = is_array($dto->transport['vehicle'] ?? null) ? $dto->transport['vehicle'] : [];
+            $plate = strtoupper(trim((string)($vehicle['plate'] ?? '')));
+            if ($plate !== '') {
+                $make->tagveicTransp((object)['placa'=>$plate,'UF'=>strtoupper(trim((string)($vehicle['state']??'')))?:null,'RNTC'=>trim((string)($vehicle['rntc']??''))?:null]);
+            }
+            $volume = is_array($dto->transport['volume'] ?? null) ? $dto->transport['volume'] : [];
+            if (array_filter($volume, static fn($value):bool => $value !== null && $value !== '')) {
+                $make->tagvol((object)['item'=>1,'qVol'=>$volume['quantity']??null,'esp'=>trim((string)($volume['species']??''))?:null,'marca'=>trim((string)($volume['brand']??''))?:null,'nVol'=>trim((string)($volume['numbering']??''))?:null,'pesoL'=>$volume['net_weight']??null,'pesoB'=>$volume['gross_weight']??null]);
+            }
+        }
+        $make->tagpag((object)['vTroco'=>$dto->payment['change']??null]);
         $method=(string)($dto->payment['method']??'');if($method==='')throw new RuntimeException('Forma de pagamento ausente no snapshot.');$make->tagdetPag((object)['indPag'=>0,'tPag'=>$method,'xPag'=>null,'vPag'=>$dto->payment['amount']??$totals['grand']]);
         if(!empty($totals['notes']))$make->taginfAdic((object)['infAdFisco'=>null,'infCpl'=>$totals['notes']]);
         return $make->getXML();
