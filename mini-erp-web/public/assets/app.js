@@ -53,8 +53,13 @@ document.addEventListener('DOMContentLoaded', function () {
         document.addEventListener('submit', function (e) {
             const form = e.target;
             if (!form || !(form instanceof HTMLFormElement)) return;
-            showLoaderBeforeNavigate();
-            // allow form to submit normally
+            // Capture happens before AJAX controllers call preventDefault().
+            // Wait for propagation and cover only a real page navigation.
+            setTimeout(function () {
+                if (!e.defaultPrevented && !form.matches('[data-ajax-form], .md-form')) {
+                    showLoaderBeforeNavigate();
+                }
+            }, 0);
         }, {capture: true});
     })();
 
