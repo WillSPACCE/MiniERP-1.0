@@ -25,8 +25,25 @@ if (session_status() === PHP_SESSION_NONE) {
 
 // Ponte localizada entre a sessão ERP segura e o runtime legado.
 $secureErpRuntime = null;
-$hasErpSession = !empty($_SESSION['erp_user_id']) || !empty($_SESSION['erp_tenant_id']);
-if ($hasErpSession) {
+$globalTechnicalId=(int)($_SESSION['erp_global_admin_id']??0);
+$hasErpSession = !empty($_SESSION['erp_user_id']) || !empty($_SESSION['erp_tenant_id']) || $globalTechnicalId>0;
+if ($globalTechnicalId>0 && !empty($_SESSION['erp_tenant_id'])) {
+    require_once __DIR__ . '/../vendor/autoload.php';
+    try {
+        $main=(new \MiniErp\Infrastructure\ControlPlaneConnectionFactory(__DIR__.'/../config.php'))->create();
+        $platformRecord=(new \MiniErp\Repositories\PlatformAdminRepository($main))->findActiveIdentity($globalTechnicalId);
+        if(!$platformRecord||!in_array((string)$platformRecord['role'],['SUPER_ADMIN','GLOBAL_TECH'],true))throw new DomainException('Acesso técnico global inválido.');
+        $erpReader=new \MiniErp\Repositories\MainDbErpAuthenticationReader($main);$tenantId=(int)$_SESSION['erp_tenant_id'];$tenant=$erpReader->findTenantById($tenantId);
+        if(!$tenant||!in_array(strtolower((string)$tenant['status']),['ativo','ativa','active'],true)||!empty($tenant['blocked']))throw new DomainException('Empresa indisponível.');
+        $context=new \MiniErp\Context\TenantContext($globalTechnicalId,$tenantId,$tenantId);
+        $connection=(new \MiniErp\Infrastructure\TenantConnectionResolver(__DIR__.'/../config.php'))->resolve($context);
+        $identity=new \MiniErp\Context\AuthenticatedTenantUser($globalTechnicalId,$tenantId,(string)$platformRecord['name'],(string)$platformRecord['email']);
+        $secureErpRuntime=['connection'=>$connection,'result'=>new \MiniErp\Services\ErpAuthenticationResult($identity,$context,$tenant),'user'=>['id'=>$globalTechnicalId,'nome'=>$platformRecord['name'],'email'=>$platformRecord['email'],'role'=>'admin','status'=>'ativo','tenant_id'=>$tenantId]];
+        Database::useResolvedTenantConnection($connection);
+    } catch (Throwable) {
+        unset($_SESSION['erp_global_admin_id'],$_SESSION['erp_tenant_id'],$_SESSION['erp_tenant_slug']);header('Location: /login.php?error=session');exit;
+    }
+} elseif ($hasErpSession) {
     require_once __DIR__ . '/../src/Contracts/ErpAuthenticationReaderContract.php';
     require_once __DIR__ . '/../src/Context/AuthenticatedTenantUser.php';
     require_once __DIR__ . '/../src/Context/TenantContext.php';
@@ -642,7 +659,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             case 'logout':
                 if ($secureErpRuntime !== null) {
                     $logoutTenantSlug = strtolower(trim((string) ($_SESSION['erp_tenant_slug'] ?? '')));
-                    unset($_SESSION['erp_user_id'], $_SESSION['erp_tenant_id'], $_SESSION['erp_tenant_slug'], $_SESSION['user_id'], $_SESSION['tenant_id'], $_SESSION['current_company_id'], $_SESSION['erp_login_csrf'], $_SESSION['erp_logout_csrf']);
+                    unset($_SESSION['erp_user_id'], $_SESSION['erp_global_admin_id'], $_SESSION['erp_tenant_id'], $_SESSION['erp_tenant_slug'], $_SESSION['user_id'], $_SESSION['tenant_id'], $_SESSION['current_company_id'], $_SESSION['erp_login_csrf'], $_SESSION['erp_logout_csrf']);
                     session_regenerate_id(true);
                     header('Location: /login.php' . ($logoutTenantSlug !== '' ? '?empresa=' . rawurlencode($logoutTenantSlug) : ''));
                     exit;
@@ -680,9 +697,9 @@ if ($secureErpRuntime !== null) {
 } elseif (!empty($_SESSION['user_id'])) {
     $currentUser = $repo->findUsuarioById((int) $_SESSION['user_id']);
 }
-$canUseOrderTestFill = (int)($currentUser['id'] ?? 0) === 9
-    && strtolower((string)($currentUser['role'] ?? '')) === 'admin'
-    && (int)($_SESSION['erp_user_id'] ?? $_SESSION['user_id'] ?? 0) === 9;
+$canUseOrderTestFill = strtolower((string)($currentUser['role'] ?? '')) === 'admin'
+    && ($globalTechnicalId > 0 || ((int)($currentUser['id'] ?? 0) === 9
+        && (int)($_SESSION['erp_user_id'] ?? $_SESSION['user_id'] ?? 0) === 9));
 
 // Se não estiver na página de login e não existe usuário autenticado, redireciona para login
 if ($page !== 'login' && !$currentUser) {

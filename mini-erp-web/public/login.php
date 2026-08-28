@@ -76,7 +76,21 @@ if ($tenantLogin && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             header('Location: /?page=dashboard');
             exit;
         } catch (DomainException) {
-            $loginError = 'Credenciais inválidas ou empresa indisponível.';
+            try {
+                require_once __DIR__.'/../src/Repositories/PlatformAdminRepository.php';
+                require_once __DIR__.'/../src/Context/AuthenticatedPlatformAdmin.php';
+                require_once __DIR__.'/../src/Services/PlatformAuthenticationService.php';
+                $platformRepository=new \MiniErp\Repositories\PlatformAdminRepository($main);
+                $global=(new \MiniErp\Services\PlatformAuthenticationService($platformRepository))->authenticate((string)($_POST['email']??''),(string)($_POST['senha']??''),$_SERVER['REMOTE_ADDR']??null);
+                if(!in_array($global->getRole(),['SUPER_ADMIN','GLOBAL_TECH'],true))throw new DomainException('Papel sem acesso global.');
+                $tenantId=(int)$tenantDisplay['tenant_id'];$expectedDb='mini_erp_tenant_'.$tenantId;
+                if($tenantId<1||!empty($tenantDisplay['blocked'])||!in_array(strtolower((string)$tenantDisplay['status']),['ativo','ativa','active'],true)||!hash_equals($expectedDb,(string)$tenantDisplay['db_name']))throw new DomainException('Empresa indisponível.');
+                $context=new \MiniErp\Context\TenantContext($global->getUserId(),$tenantId,$tenantId);
+                (new \MiniErp\Infrastructure\TenantConnectionResolver(__DIR__.'/../config.php'))->resolve($context);
+                session_regenerate_id(true);$_SESSION['erp_global_admin_id']=$global->getUserId();$_SESSION['erp_user_id']=$global->getUserId();$_SESSION['erp_tenant_id']=$tenantId;$_SESSION['erp_tenant_slug']=(string)$tenantDisplay['slug'];foreach(['user_id','tenant_id','current_company_id']as$legacySessionKey)unset($_SESSION[$legacySessionKey]);
+                $platformRepository->audit($global->getUserId(),'GLOBAL_ERP_LOGIN','tenant',(string)$tenantId,$_SERVER['REMOTE_ADDR']??null,['slug'=>$tenantSlug]);
+                header('Location: /?page=dashboard');exit;
+            } catch (DomainException) {$loginError = 'Credenciais inválidas ou empresa indisponível.';}
         } catch (Throwable) {
             $loginError = 'Não foi possível abrir o ERP com segurança.';
         }

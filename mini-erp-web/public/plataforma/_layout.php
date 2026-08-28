@@ -66,6 +66,7 @@ function renderPlatformStart(object $identity, string $title, string $breadcrumb
         <nav class="platform-nav" aria-label="Navegação do painel">
             <a href="/plataforma/">Dashboard</a>
             <a href="/plataforma/">Empresas</a>
+            <a href="/plataforma/tecnicos.php">Técnicos globais</a>
             <a href="/plataforma/operacoes-multitenant.php">Operações Multi-tenant</a>
             <span class="disabled">Auditoria <small>Em breve</small></span>
         </nav>

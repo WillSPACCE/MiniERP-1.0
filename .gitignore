@@ -10,6 +10,7 @@ vendor/
 node_modules/
 
 *.log
+*.pdb
 
 .vscode/
 .idea/

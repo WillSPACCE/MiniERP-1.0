@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
+using System.Security.Cryptography.X509Certificates;
 
 namespace MiniRPServidores;
 
@@ -153,6 +155,37 @@ internal sealed class ServerManager
     }
 }
 
+internal sealed class PublicTunnelManager
+{
+    private Process? process;
+    public string? PublicUrl { get; private set; }
+    public string? BaseUrl { get; private set; }
+    public bool Running => process is { HasExited: false } && PublicUrl is not null;
+
+    public async Task<string> StartAsync()
+    {
+        if (Running) return PublicUrl!;
+        if (!await ServerManager.IsListeningAsync(8000)) throw new InvalidOperationException("Ligue o servidor MiniRP antes de liberar o acesso online.");
+        var folder=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MiniRP","tools");Directory.CreateDirectory(folder);
+        var executable=Path.Combine(folder,"cloudflared.exe");
+        if(!File.Exists(executable)){
+            using var client=new HttpClient();client.Timeout=TimeSpan.FromMinutes(3);
+            var bytes=await client.GetByteArrayAsync("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe");
+            var temporary=executable+".download";await File.WriteAllBytesAsync(temporary,bytes);
+            try{using var certificate=new X509Certificate2(X509Certificate.CreateFromSignedFile(temporary));if(!certificate.Subject.Contains("Cloudflare",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("A assinatura digital do cloudflared não pertence à Cloudflare.");File.Move(temporary,executable,true);}catch{File.Delete(temporary);throw;}
+        }
+        process=new Process{StartInfo=new ProcessStartInfo(executable,"tunnel --no-autoupdate --url http://127.0.0.1:8000") {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,WindowStyle=ProcessWindowStyle.Hidden}};
+        var ready=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        DataReceivedEventHandler read=(_,e)=>{if(e.Data is null)return;var match=Regex.Match(e.Data,@"https://[a-z0-9-]+\.trycloudflare\.com",RegexOptions.IgnoreCase);if(match.Success){BaseUrl=match.Value;PublicUrl=BaseUrl+"/plataforma/";ready.TrySetResult(PublicUrl);}};
+        process.OutputDataReceived+=read;process.ErrorDataReceived+=read;process.Start();process.BeginOutputReadLine();process.BeginErrorReadLine();
+        var completed=await Task.WhenAny(ready.Task,Task.Delay(TimeSpan.FromSeconds(30)));
+        if(completed!=ready.Task){Stop();throw new InvalidOperationException("O túnel não forneceu uma URL pública. Verifique sua conexão com a internet.");}
+        return await ready.Task;
+    }
+
+    public void Stop(){try{if(process is {HasExited:false})process.Kill(true);}catch{}process?.Dispose();process=null;PublicUrl=null;BaseUrl=null;}
+}
+
 internal sealed class ServerCard : Panel
 {
     private readonly Label status;
@@ -204,12 +237,16 @@ internal sealed class MainForm : Form
     private readonly List<ServerCard> cards = [];
     private readonly Label feedback;
     private readonly Button startAll;
+    private readonly PublicTunnelManager tunnel = new();
+    private readonly Label publicUrl;
+    private readonly Button online;
+    private readonly Button copyUrl;
     private bool busy;
 
     public MainForm()
     {
         Text = "MiniRP · Servidores";
-        ClientSize = new Size(720, 590);
+        ClientSize = new Size(720, 680);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -249,13 +286,21 @@ internal sealed class MainForm : Form
         stop.Click += async (_, _) => await StopAllAsync();
         Controls.AddRange([open, stop]);
 
-        feedback = new Label { Text = "Verificando os servidores...", ForeColor = Color.FromArgb(95, 105, 120), Location = new Point(35, 540), Size = new Size(650, 28) };
+        var onlinePanel=new Panel{Location=new Point(35,532),Size=new Size(650,88),BackColor=Color.White,Padding=new Padding(12)};
+        onlinePanel.Controls.Add(new Label{Text="Painel da Plataforma online",Font=new Font("Segoe UI Semibold",10),Location=new Point(14,10),Size=new Size(230,22)});
+        publicUrl=new Label{Text="Desligado · nenhuma porta pública aberta",ForeColor=Color.FromArgb(105,115,130),Location=new Point(14,39),Size=new Size(355,30),AutoEllipsis=true};
+        online=new Button{Text="Liberar online",Location=new Point(382,16),Size=new Size(122,38),FlatStyle=FlatStyle.Flat,Cursor=Cursors.Hand};online.Click+=async(_,_)=>await ToggleTunnelAsync();
+        copyUrl=new Button{Text="Abrir / copiar",Location=new Point(514,16),Size=new Size(110,38),FlatStyle=FlatStyle.Flat,Enabled=false,Cursor=Cursors.Hand};copyUrl.Click+=(_,_)=>{if(tunnel.PublicUrl is not null){Clipboard.SetText(tunnel.PublicUrl);Process.Start(new ProcessStartInfo(tunnel.PublicUrl){UseShellExecute=true});}};
+        onlinePanel.Controls.AddRange([publicUrl,online,copyUrl]);Controls.Add(onlinePanel);
+
+        feedback = new Label { Text = "Verificando os servidores...", ForeColor = Color.FromArgb(95, 105, 120), Location = new Point(35, 635), Size = new Size(650, 28) };
         Controls.Add(feedback);
 
         var timer = new System.Windows.Forms.Timer { Interval = 3000 };
         timer.Tick += async (_, _) => { if (!busy) await RefreshStatusAsync(); };
         timer.Start();
         Shown += async (_, _) => await RefreshStatusAsync();
+        FormClosed += (_, _) => tunnel.Stop();
     }
 
     private Icon? LoadIcon()
@@ -285,14 +330,23 @@ internal sealed class MainForm : Form
 
     private async Task StopAllAsync()
     {
-        if (MessageBox.Show("Desligar MiniRP, Apache e MySQL?", "Confirmar", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        if (MessageBox.Show("Desligar o acesso online, MiniRP, Apache e MySQL?", "Confirmar", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         await RunBusyAsync(async () =>
         {
+            tunnel.Stop();UpdateTunnelUi();
             var messages = new List<string>();
             foreach (var server in servers.Reverse()) messages.Add(await manager.StopAsync(server));
             return string.Join("  ", messages);
         });
     }
+
+    private async Task ToggleTunnelAsync()
+    {
+        if(tunnel.Running){tunnel.Stop();UpdateTunnelUi();feedback.Text="Acesso online desligado.";return;}
+        await RunBusyAsync(async()=>{var url=await tunnel.StartAsync();UpdateTunnelUi();return "Acesso online liberado: "+url;});
+    }
+
+    private void UpdateTunnelUi(){publicUrl.Text=tunnel.PublicUrl??"Desligado · nenhuma porta pública aberta";online.Text=tunnel.Running?"Desligar online":"Liberar online";copyUrl.Enabled=tunnel.Running;}
 
     private async Task RunBusyAsync(Func<Task<string>> operation)
     {

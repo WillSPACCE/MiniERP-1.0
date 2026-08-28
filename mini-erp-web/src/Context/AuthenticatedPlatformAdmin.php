@@ -25,7 +25,7 @@ final readonly class AuthenticatedPlatformAdmin
         if (trim($this->name) === '') {
             throw new InvalidArgumentException('Platform admin name is required.');
         }
-        if (!in_array($this->role, ['SUPER_ADMIN', 'SUPPORT', 'DATABASE_ADMIN', 'AUDITOR'], true)) { throw new InvalidArgumentException('Platform admin role is invalid.'); }
+        if (!in_array($this->role, ['SUPER_ADMIN', 'GLOBAL_TECH', 'SUPPORT', 'DATABASE_ADMIN', 'AUDITOR'], true)) { throw new InvalidArgumentException('Platform admin role is invalid.'); }
     }
 
     public function getUserId(): int

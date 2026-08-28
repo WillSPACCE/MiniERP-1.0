@@ -8,6 +8,10 @@ própria; não abre terminal nem depende do antigo arquivo `.bat`. O painel perm
 - ver quais servidores estão ligados;
 - ligar ou desligar cada servidor separadamente;
 - desligar todos os servidores com confirmação.
+- liberar temporariamente o MiniRP por HTTPS para testes externos;
+- mostrar, abrir e copiar a URL pública direta do Painel da Plataforma, onde o técnico escolhe qual empresa acessar, e desligá-la quando terminar.
+
+O acesso online usa Cloudflare Quick Tunnel somente para demonstrações/testes. O aplicativo baixa o executável oficial `cloudflared` no primeiro uso. MySQL e Apache não são publicados; apenas o MiniRP local na porta 8000 passa pelo túnel HTTPS.
 
 O painel pressupõe o XAMPP instalado em `C:\xampp` e usa a porta `8000` para o MiniRP.
 
