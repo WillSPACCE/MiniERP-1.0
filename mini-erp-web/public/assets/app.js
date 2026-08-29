@@ -124,6 +124,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const hamburger = document.getElementById('hamburger');
         const drawer = document.getElementById('sidebar-drawer');
         const backdrop = document.getElementById('drawer-backdrop');
+        const closeButton = drawer?.querySelector('[data-drawer-close]');
         // drawerClose button removed; compact mode on desktop will be handled by CSS/JS
         if (!hamburger || !drawer || !backdrop) return;
 
@@ -134,12 +135,16 @@ document.addEventListener('DOMContentLoaded', function () {
             backdrop.classList.add('open');
             drawer.setAttribute('aria-hidden', 'false');
             hamburger.setAttribute('aria-expanded', 'true');
+            document.body.classList.add('mobile-menu-open');
+            closeButton?.focus({ preventScroll: true });
         }
         function closeDrawer() {
             drawer.classList.remove('open');
             backdrop.classList.remove('open');
             drawer.setAttribute('aria-hidden', 'true');
             hamburger.setAttribute('aria-expanded', 'false');
+            document.body.classList.remove('mobile-menu-open');
+            if (isMobile()) hamburger.focus({ preventScroll: true });
         }
 
         // Toggle only on mobile; on desktop drawer stays fixed open via CSS
@@ -148,6 +153,10 @@ document.addEventListener('DOMContentLoaded', function () {
             if (drawer.classList.contains('open')) closeDrawer(); else openDrawer();
         });
         backdrop.addEventListener('click', function () { if (isMobile()) closeDrawer(); });
+        closeButton?.addEventListener('click', closeDrawer);
+        drawer.querySelectorAll('a').forEach(link => link.addEventListener('click', function () {
+            if (isMobile()) closeDrawer();
+        }));
 
         // category toggles inside drawer (work on both mobile and desktop)
         drawer.querySelectorAll('.cat-toggle').forEach(btn => {
@@ -257,6 +266,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 hamburger.style.display = '';
                 closeAllSubmenus();
             } else {
+                document.body.classList.remove('mobile-menu-open');
                 // desktop: compact by default, visible, but without forcing the mobile "open" state
                 drawer.classList.add('compact');
                 drawer.classList.remove('expanded');
@@ -683,25 +693,27 @@ document.addEventListener('DOMContentLoaded', function () {
             field.dispatchEvent(new Event('change', { bubbles: true }));
             field.dispatchEvent(new Event('input', { bubbles: true }));
         };
-        const selectFirst = name => {
+        const randomItem = items => items[Math.floor(Math.random() * items.length)];
+        const selectRandom = name => {
             const field = form.elements.namedItem(name);
             if (!(field instanceof HTMLSelectElement)) return false;
-            const option = [...field.options].find(item => item.value !== '' && !item.disabled);
-            if (!option) return false;
+            const options = [...field.options].filter(item => item.value !== '' && !item.disabled);
+            if (!options.length) return false;
+            const option = randomItem(options);
             setValue(name, option.value);
             return true;
         };
 
         btnClear?.click();
         const direction = String(form.elements.namedItem('tipo')?.value || 'saida');
-        selectFirst(direction === 'entrada' ? 'fornecedor_id' : 'cliente_id');
-        selectFirst('cfop_id');
+        selectRandom(direction === 'entrada' ? 'fornecedor_id' : 'cliente_id');
+        selectRandom('cfop_id');
         setValue('fiscal_model', '55');
         setValue('purpose', 'NORMAL');
         setValue('presence_indicator', '1');
         setValue('codigo_interno', `TESTE-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`);
-        setValue('condicao_pagamento', 'avista');
-        setValue('documento', 'PIX');
+        if (!selectRandom('condicao_pagamento')) setValue('condicao_pagamento', 'avista');
+        if (!selectRandom('documento')) setValue('documento', 'PIX');
         setValue('vencimento', new Date().toISOString().slice(0, 10));
         setValue('frete', '0');
         setValue('desconto_percent', '0');
@@ -709,14 +721,16 @@ document.addEventListener('DOMContentLoaded', function () {
         setValue('observacoes', 'PREENCHIMENTO DE TESTE — revisar antes de gravar ou preparar nota.');
         setValue('freight_mode', '9');
 
-        const product = (window.PRODUCTS || []).find(item => item.status !== 'inativo' && Number(item.preco) > 0)
-            || (window.PRODUCTS || []).find(item => item.status !== 'inativo');
-        if (product && search) {
-            search.value = String(product.codigo || product.id);
-            search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-        }
+        const activeProducts = (window.PRODUCTS || []).filter(item => item.status !== 'inativo');
+        const pricedProducts = activeProducts.filter(item => Number(item.preco) > 0);
+        const productPool = pricedProducts.length ? pricedProducts : activeProducts;
+        const shuffledProducts = [...productPool].sort(() => Math.random() - 0.5);
+        const itemCount = Math.min(shuffledProducts.length, 1 + Math.floor(Math.random() * 3));
+        shuffledProducts.slice(0, itemCount).forEach(product => {
+            addItem(product, { quantidade: 1 + Math.floor(Math.random() * 5) });
+        });
         testFillButton.blur();
-        window.AppToast?.show('Dados de teste preenchidos. Revise antes de gravar.', 'success', 4500);
+        window.AppToast?.show('Dados aleatórios dos cadastros foram preenchidos. Revise antes de gravar.', 'success', 4500);
     });
 
     // global keys
@@ -881,7 +895,7 @@ document.addEventListener('click', function (e) {
         e.preventDefault();
         const previewWindow = window.open('', '_blank');
         if (!previewWindow) {
-            alert('O navegador bloqueou a nova guia. Permita pop-ups para abrir a prévia fiscal.');
+            window.location.href = previewLink.href;
             return;
         }
         previewWindow.document.write('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Gerando prévia DANFE</title><body style="font:16px system-ui;padding:32px"><p>Gerando prévia DANFE...</p></body></html>');
@@ -932,3 +946,36 @@ document.addEventListener('click', function (e) {
     modal.classList.add('show');
     modal.setAttribute('aria-hidden', 'false');
 });
+
+// Gestão de usuários da empresa em modal com guias.
+(() => {
+    const modal = document.querySelector('[data-user-modal]');
+    const form = modal?.querySelector('[data-user-form]');
+    if (!modal || !form) return;
+    const users = Array.isArray(window.ERP_COMPANY_USERS) ? window.ERP_COMPANY_USERS : [];
+    const title = modal.querySelector('#user-modal-title');
+    const tabs = [...modal.querySelectorAll('[data-user-tab]')];
+    const panels = [...modal.querySelectorAll('[data-user-panel]')];
+    const showTab = name => {
+        tabs.forEach(tab => { const active = tab.dataset.userTab === name; tab.classList.toggle('active', active); tab.setAttribute('aria-selected', String(active)); });
+        panels.forEach(panel => panel.classList.toggle('active', panel.dataset.userPanel === name));
+    };
+    const setField = (name, value) => { const field = form.elements.namedItem(name); if (field) field.value = value == null ? '' : String(value); };
+    const open = (user = null) => {
+        form.reset();
+        setField('id', user?.id || ''); setField('nome', user?.nome || ''); setField('email', user?.email || '');
+        setField('cargo', user?.cargo || 'funcionario'); setField('role', user?.role || 'user'); setField('status', user?.status || 'ativo'); setField('pessoa_id', user?.pessoa_id || '');
+        const permissions = new Set(String(user?.permissions || '').split(',').filter(Boolean));
+        form.querySelectorAll('[name="permissions[]"]').forEach(box => { box.checked = permissions.has(box.value); });
+        const password = form.elements.namedItem('senha'); if (password) { password.required = !user; password.placeholder = user ? 'Deixe em branco para manter' : 'Crie uma senha de acesso'; }
+        if (title) title.textContent = user ? 'Editar usuário' : 'Novo usuário';
+        showTab('access'); modal.hidden = false; modal.setAttribute('aria-hidden', 'false'); document.body.classList.add('user-modal-open');
+        setTimeout(() => form.elements.namedItem('nome')?.focus(), 30);
+    };
+    const close = () => { modal.hidden = true; modal.setAttribute('aria-hidden', 'true'); document.body.classList.remove('user-modal-open'); };
+    document.querySelector('[data-user-modal-open]')?.addEventListener('click', () => open());
+    document.querySelectorAll('[data-user-edit]').forEach(button => button.addEventListener('click', () => open(users.find(user => Number(user.id) === Number(button.dataset.userEdit)) || null)));
+    modal.querySelectorAll('[data-user-modal-close]').forEach(button => button.addEventListener('click', close));
+    tabs.forEach(tab => tab.addEventListener('click', () => showTab(tab.dataset.userTab)));
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && !modal.hidden) close(); });
+})();

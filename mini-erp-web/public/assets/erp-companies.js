@@ -1,5 +1,6 @@
 (() => {
   const dialog=document.querySelector('#erp-company-modal');if(!dialog)return;
+  const companyLabels=['Empresa','Razão social','CNPJ','Cidade / UF','Fiscal','Status','Ações'];document.querySelectorAll('.company-list-table tbody tr').forEach(row=>[...row.children].forEach((cell,index)=>cell.dataset.label=companyLabels[index]||''));
   const tabs=[...dialog.querySelectorAll('[data-company-tab-button]')],panels=[...dialog.querySelectorAll('[data-company-panel]')],body=dialog.querySelector('.erp-company-body'),crumb=dialog.querySelector('[data-company-breadcrumb]'),status=dialog.querySelector('[data-company-status]');
   const history=[];let position=-1,active='geral',dirty=false,opener=null,viewOnly=false;
   const labels=Object.fromEntries(tabs.map(tab=>[tab.dataset.companyTabButton,tab.textContent.trim()]));

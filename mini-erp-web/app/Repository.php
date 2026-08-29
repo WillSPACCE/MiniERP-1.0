@@ -202,6 +202,7 @@ class Repository {
             "email_verification_token" => "VARCHAR(255) DEFAULT NULL",
             "permissions" => "TEXT DEFAULT NULL",
             "cargo" => "VARCHAR(50) DEFAULT 'funcionario'",
+            "pessoa_id" => "INT NULL",
         ];
         foreach ($cols as $col => $def) {
             $stmt = $this->pdo->query("SHOW COLUMNS FROM usuarios LIKE '$col'");
@@ -1011,15 +1012,29 @@ class Repository {
     }
 
     // --- usuários / funcionários ---
+    private function ensureUsuarioPessoaLinkColumn(): bool
+    {
+        if ($this->hasColumn('usuarios', 'pessoa_id')) return true;
+        try {
+            $this->pdo->exec('ALTER TABLE usuarios ADD COLUMN pessoa_id INT NULL AFTER company_id');
+            $this->columnCache['usuarios.pessoa_id'] = true;
+            return true;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
     public function listUsuarios(): array
     {
         try {
             $tenantId = $this->requireTenantId();
+            $hasPersonLink = $this->ensureUsuarioPessoaLinkColumn();
+            $personSelect = $hasPersonLink ? ', pessoa_id, (SELECT c.nome FROM clientes c WHERE c.id = usuarios.pessoa_id LIMIT 1) AS pessoa_nome' : ', NULL AS pessoa_id, NULL AS pessoa_nome';
             if ($this->hasColumn('usuarios', 'tenant_id')) {
-                $stmt = $this->pdo->prepare('SELECT id, nome, email, role, avatar, status, cargo FROM usuarios WHERE tenant_id = :tid ORDER BY id DESC');
+                $stmt = $this->pdo->prepare('SELECT id, nome, email, role, avatar, status, cargo, permissions' . $personSelect . ' FROM usuarios WHERE tenant_id = :tid ORDER BY id DESC');
                 $stmt->execute(['tid' => $tenantId]);
             } else {
-                $stmt = $this->pdo->query('SELECT id, nome, email, role, avatar, status, cargo FROM usuarios ORDER BY id DESC');
+                $stmt = $this->pdo->query('SELECT id, nome, email, role, avatar, status, cargo, permissions' . $personSelect . ' FROM usuarios ORDER BY id DESC');
             }
             return $stmt->fetchAll();
         } catch (Throwable $e) {
@@ -1471,6 +1486,18 @@ class Repository {
             'company_id' => $currentCompany,
             'tenant_id' => $tenantId,
         ];
+        if ($this->ensureUsuarioPessoaLinkColumn()) {
+            $personId = (int)($data['pessoa_id'] ?? 0);
+            if ($personId > 0) {
+                $hasClientTenant = $this->hasColumn('clientes', 'tenant_id');
+                $person = $this->pdo->prepare('SELECT id FROM clientes WHERE id = :id' . ($hasClientTenant ? ' AND tenant_id = :tid' : '') . ' LIMIT 1');
+                $personParams = ['id' => $personId];
+                if ($hasClientTenant) $personParams['tid'] = $tenantId;
+                $person->execute($personParams);
+                if (!$person->fetchColumn()) throw new InvalidArgumentException('A pessoa selecionada não pertence a esta empresa.');
+            }
+            $params['pessoa_id'] = $personId ?: null;
+        }
 
         // trata senha se informado
         if (!empty($data['senha'])) {

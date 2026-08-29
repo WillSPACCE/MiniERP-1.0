@@ -1,6 +1,7 @@
 ALTER TABLE fiscal_number_reservations
     ADD COLUMN IF NOT EXISTS fiscal_document_version INT UNSIGNED NOT NULL DEFAULT 1 AFTER fiscal_document_id,
     ADD COLUMN IF NOT EXISTS fiscal_series_id BIGINT UNSIGNED NULL AFTER fiscal_document_version,
+    ADD COLUMN IF NOT EXISTS number BIGINT UNSIGNED NULL AFTER series,
     ADD COLUMN IF NOT EXISTS cnf VARCHAR(32) NULL AFTER environment,
     ADD COLUMN IF NOT EXISTS access_key VARCHAR(64) NULL AFTER cnf,
     ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128) NULL AFTER status,

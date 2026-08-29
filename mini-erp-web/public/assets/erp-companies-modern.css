@@ -1,0 +1,93 @@
+/* Guia Empresa alinhada ao padrão visual do modal de usuários. */
+.company-list-filters {
+    padding: 16px;
+    border-color: var(--border, #e1e6ed);
+    border-radius: 14px;
+    background: var(--panel, #fff);
+    box-shadow: 0 5px 18px rgba(26, 55, 100, .05);
+}
+.company-list-card {
+    border-color: var(--border, #e1e6ed);
+    border-radius: 16px;
+    background: var(--panel, #fff);
+    box-shadow: 0 8px 24px rgba(26, 55, 100, .06);
+}
+.company-list-table td, .company-list-table th { padding: 13px 14px; }
+.company-actions button { min-height: 38px; border-radius: 9px; }
+.company-pagination { padding: 11px 14px; background: var(--panel-soft, #f8fafc); }
+.erp-company-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 9px 14px 0;
+    border-bottom: 1px solid var(--border, #eaecf0);
+}
+#erp-company-modal .app-tabs__tab {
+    min-height: 43px;
+    padding: 8px 13px;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    background: transparent;
+    color: var(--muted, #667085);
+    font-weight: 700;
+    white-space: nowrap;
+}
+#erp-company-modal .app-tabs__tab[aria-selected="true"] {
+    color: var(--primary, #1570ef);
+    border-bottom-color: var(--primary, #1570ef);
+}
+.erp-company-location { background: var(--panel-soft, #f8fafc); }
+.erp-company-body { padding: 20px; }
+.readiness-list div {
+    border: 1px solid var(--border, #eaecf0);
+    border-radius: 10px;
+    background: var(--panel-soft, #f8fafc);
+}
+#erp-company-modal .app-modal__surface {
+    width: min(94vw, 1120px);
+    height: min(90vh, 820px);
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 28px 70px rgba(8, 24, 50, .28);
+}
+@media (max-width: 800px) {
+    .company-list-heading { align-items: flex-start; }
+    .company-list-filters .btn { min-height: 44px; }
+    .company-table-wrap { overflow: visible; }
+    .company-list-table, .company-list-table tbody, .company-list-table tr, .company-list-table td {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .company-list-table { min-width: 0; }
+    .company-list-table thead { display: none; }
+    .company-list-table tr { padding: 12px 14px; }
+    .company-list-table td {
+        display: grid;
+        grid-template-columns: 90px 1fr;
+        gap: 8px;
+        padding: 5px 0;
+        border: 0;
+    }
+    .company-list-table td::before {
+        content: attr(data-label);
+        color: var(--muted, #667085);
+        font-size: .7rem;
+        font-weight: 700;
+    }
+    .company-actions { grid-column: 1 / -1; margin-top: 8px; }
+    .company-actions button { min-height: 44px; flex: 1; justify-content: center; }
+    .company-actions span { display: inline; }
+    #erp-company-modal { padding: 0; align-items: end; }
+    #erp-company-modal .app-modal__surface {
+        width: 100%;
+        height: auto;
+        max-height: 94dvh;
+        border-radius: 20px 20px 0 0;
+        border-bottom: 0;
+    }
+    #erp-company-modal .app-modal__header { padding: 14px 16px; }
+    .erp-company-body { padding: 15px; }
+    .erp-company-tabs { padding-inline: 8px; }
+    .erp-company-location { padding-inline: 12px; }
+    #erp-company-modal .app-modal__footer .btn { min-height: 46px; flex: 1; }
+}

@@ -96,6 +96,7 @@ $e = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
             </div>
             <button class="btn btn-primary" type="submit" <?= $hasAdmins ? '' : 'disabled' ?>>Entrar no Control-Plane</button>
         </form>
+        <footer class="site-credit">Desenvolvido por <a href="https://willspacce.netlify.app/" target="_blank" rel="noopener noreferrer" aria-label="Portfólio de Willyan Martins">Willyan Martins <span aria-hidden="true">›</span></a></footer>
     </main>
 </body>
 </html>

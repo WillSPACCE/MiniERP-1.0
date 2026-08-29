@@ -31,6 +31,14 @@ function renderPlatformStart(object $identity, string $title, string $breadcrumb
     $crumb = platformEscape($breadcrumb);
     $csrf = platformEscape($_SESSION['platform_logout_csrf']);
     $embedded = isset($_GET['embed']) && $_GET['embed'] === '1';
+    $currentPath = (string) parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+    $mobileActive = static fn(string $path): string => $currentPath === $path || ($path !== '/plataforma/' && str_starts_with($currentPath, $path)) ? ' active' : '';
+    $mobileCompanies = $mobileActive('/plataforma/');
+    $mobileTechnicians = $mobileActive('/plataforma/tecnicos.php');
+    $mobileOperations = $mobileActive('/plataforma/operacoes-multitenant.php');
+    $mobileAudit = $mobileActive('/plataforma/auditoria.php');
+    $mobileSettings = $mobileActive('/plataforma/configuracoes.php');
+    $mobileAccount = $mobileActive('/plataforma/minha-conta.php');
     $uiScripts = $embedded
         ? '<link rel="stylesheet" href="/assets/embed-ui.css"><script src="/assets/embed-ui.js" defer></script>'
         : '<script src="/assets/app-ui.js" defer></script><script src="/assets/fiscal-config-ui.js" defer></script>';
@@ -45,7 +53,11 @@ function renderPlatformStart(object $identity, string $title, string $breadcrumb
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
     <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png">
-    <link rel="stylesheet" href="/assets/platform.css">
+    <link rel="stylesheet" href="/assets/platform.css?v=mobile6">
+    <link rel="stylesheet" href="/assets/platform-audit.css?v=2">
+    <link rel="stylesheet" href="/assets/platform-audit-simple.css?v=3">
+    <link rel="stylesheet" href="/assets/platform-audit-table.css?v=1">
+    <link rel="stylesheet" href="/assets/platform-audit-rules.css?v=1">
     <link rel="stylesheet" href="/assets/app-ui.css">
     <link rel="stylesheet" href="/assets/app-feedback.css">
     <link rel="stylesheet" href="/assets/ui-forms.css">
@@ -57,7 +69,7 @@ function renderPlatformStart(object $identity, string $title, string $breadcrumb
 <div class="platform-shell">
     <aside class="platform-sidebar">
         <div class="platform-brand">
-            <span class="brand-mark">MR</span>
+            <img class="platform-brand-logo" src="/assets/images/mini-erp-logo.png" alt="Mini ERP Web">
             <div>
                 <strong>Mini ERP</strong>
                 <small>Control-Plane</small>
@@ -68,7 +80,8 @@ function renderPlatformStart(object $identity, string $title, string $breadcrumb
             <a href="/plataforma/">Empresas</a>
             <a href="/plataforma/tecnicos.php">Técnicos globais</a>
             <a href="/plataforma/operacoes-multitenant.php">Operações Multi-tenant</a>
-            <span class="disabled">Auditoria <small>Em breve</small></span>
+            <a href="/plataforma/auditoria.php">Auditoria</a>
+            <a href="/plataforma/configuracoes.php">Configurações</a>
         </nav>
     </aside>
     <div class="platform-main">
@@ -89,6 +102,14 @@ function renderPlatformStart(object $identity, string $title, string $breadcrumb
                 </form>
             </div>
         </header>
+        <nav class="platform-mobile-nav" aria-label="Menu principal para celular">
+            <a class="{$mobileSettings}" href="/plataforma/configuracoes.php"><span aria-hidden="true">⚙</span><strong>Config.</strong></a>
+            <a class="{$mobileCompanies}" href="/plataforma/"><span aria-hidden="true">▦</span><strong>Empresas</strong></a>
+            <a class="{$mobileTechnicians}" href="/plataforma/tecnicos.php"><span aria-hidden="true">♟</span><strong>Técnicos</strong></a>
+            <a class="{$mobileOperations}" href="/plataforma/operacoes-multitenant.php"><span aria-hidden="true">↻</span><strong>Operações</strong></a>
+            <a class="{$mobileAudit}" href="/plataforma/auditoria.php"><span aria-hidden="true">◫</span><strong>Auditoria</strong></a>
+            <a class="{$mobileAccount}" href="/plataforma/minha-conta.php"><span aria-hidden="true">●</span><strong>Conta</strong></a>
+        </nav>
         <main class="content">
             <p class="muted">{$crumb}</p>
 HTML;
@@ -100,5 +121,5 @@ function renderPlatformEnd(): void
         echo '</div>';
         return;
     }
-    echo '</main></div></div></body></html>';
+    echo '<footer class="site-credit platform-credit">Desenvolvido por <a href="https://willspacce.netlify.app/" target="_blank" rel="noopener noreferrer" aria-label="Portfólio de Willyan Martins">Willyan Martins <span aria-hidden="true">›</span></a></footer></main></div></div></body></html>';
 }

@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS produtos (
     preco DECIMAL(10,2) NOT NULL DEFAULT 0,
     estoque_atual INT NOT NULL DEFAULT 0,
     status VARCHAR(20) DEFAULT 'ativo',
-    company_id INT NULL
+    company_id INT NULL,
+    pessoa_id INT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS vendas (

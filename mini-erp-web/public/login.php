@@ -9,6 +9,7 @@ $tenantDisplay = null;
 $tenantReader = null;
 $tenantUnavailable = false;
 $tenantDisplayName = '';
+$tenantPolicyMessage = '';
 
 if ($tenantLogin) {
     require_once __DIR__ . '/../src/Contracts/ErpAuthenticationReaderContract.php';
@@ -19,6 +20,7 @@ if ($tenantLogin) {
     require_once __DIR__ . '/../src/Infrastructure/ControlPlaneConnectionFactory.php';
     require_once __DIR__ . '/../src/Infrastructure/TenantConnectionResolver.php';
     require_once __DIR__ . '/../src/Repositories/MainDbErpAuthenticationReader.php';
+    require_once __DIR__ . '/../src/Repositories/TenantAccessPolicyRepository.php';
     require_once __DIR__ . '/../src/Services/ErpAuthenticationResult.php';
     require_once __DIR__ . '/../src/Services/ErpAuthenticationService.php';
     try {
@@ -27,6 +29,12 @@ if ($tenantLogin) {
         $tenantDisplay = $tenantReader->findTenantBySlug($tenantSlug);
         $tenantUnavailable = $tenantDisplay === null;
         if ($tenantDisplay !== null) {
+            $loginPolicy=(new \MiniErp\Repositories\TenantAccessPolicyRepository($main))->effectiveForTenant((int)$tenantDisplay['tenant_id']);
+            if (($loginPolicy['access_mode']??'FULL') === 'BLOCKED') {
+                $tenantUnavailable=true;$tenantPolicyMessage='Acesso temporariamente bloqueado.';
+                if(trim((string)($loginPolicy['reason']??''))!=='')$tenantPolicyMessage.=' Motivo: '.trim((string)$loginPolicy['reason']).'.';
+                if(!empty($loginPolicy['expires_at']))$tenantPolicyMessage.=' Liberação automática em '.date('d/m/Y H:i',strtotime((string)$loginPolicy['expires_at'])).'.';
+            }
             $storedName = trim((string) ($tenantDisplay['nome_fantasia'] ?: $tenantDisplay['razao_social']));
             $tenantDisplayName = mb_convert_case($storedName, MB_CASE_TITLE, 'UTF-8');
         }
@@ -43,6 +51,10 @@ if (!empty($_GET['error'])) {
         $loginError = 'Credenciais inválidas. Verifique usuário e senha.';
     } elseif ($err === 'inactive') {
         $loginError = 'Usuário inativo. Entre em contato com o administrador.';
+    } elseif ($err === 'policy_blocked') {
+        $loginError = 'A empresa está temporariamente bloqueada pelo administrador da plataforma.';
+    } elseif ($err === 'session') {
+        $loginError = 'Não foi possível manter a sessão da empresa. Entre novamente.';
         } elseif ($err === 'unverified') {
             $loginError = 'E-mail não verificado. Verifique sua caixa de entrada.';
     }
@@ -52,7 +64,7 @@ if (!empty($_GET['registered'])) {
 }
 
 if ($tenantUnavailable) {
-    $loginError = 'Empresa indisponível ou link inválido.';
+    $loginError = $tenantPolicyMessage !== '' ? $tenantPolicyMessage : 'Empresa indisponível ou link inválido.';
 }
 
 if ($tenantLogin && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
@@ -115,8 +127,8 @@ $_SESSION['erp_login_csrf'] ??= bin2hex(random_bytes(32));
     <link rel="manifest" href="/assets/images/site.webmanifest">
     <meta name="theme-color" content="#1e88e5">
     <meta name="description" content="Acesse o Mini ERP - sistema de gestão">
-    <link rel="stylesheet" href="/assets/style.css">
-    <link rel="stylesheet" href="/assets/login.css">
+    <link rel="stylesheet" href="/assets/style.css?v=login-mobile2">
+    <link rel="stylesheet" href="/assets/login.css?v=login-mobile2">
     <script src="/assets/login.js" defer></script>
 </head>
 <body class="page-ready">
@@ -148,9 +160,9 @@ $_SESSION['erp_login_csrf'] ??= bin2hex(random_bytes(32));
                         <div class="login-error" role="alert" style="color:#c62828;margin-bottom:12px;font-weight:700;"><?php echo htmlspecialchars($loginError); ?></div>
                     <?php endif; ?>
                     <?php if (!empty($tenantDisplay)): ?>
-                        <div style="margin-bottom:8px;font-weight:700;">Empresa: <?= htmlspecialchars($tenantDisplayName, ENT_QUOTES, 'UTF-8') ?></div>
+                        <div class="tenant-login-name">Empresa: <?= htmlspecialchars($tenantDisplayName, ENT_QUOTES, 'UTF-8') ?></div>
                         <?php if (!empty($tenantDisplay['logo'])): ?>
-                            <div style="margin-bottom:8px;"><img src="<?= htmlspecialchars($tenantDisplay['logo']) ?>" alt="Logo" style="max-height:48px;"></div>
+                            <div class="tenant-login-logo"><img src="<?= htmlspecialchars($tenantDisplay['logo']) ?>" alt="Logo"></div>
                         <?php endif; ?>
                     <?php endif; ?>
                     <div class="social-container">
@@ -190,7 +202,7 @@ $_SESSION['erp_login_csrf'] ??= bin2hex(random_bytes(32));
                         <img src="/assets/images/logo_login.png" alt="MiniERPWeb" class="login-footer-logo" onerror="this.style.display='none'">
                     </a>
                 </div>
-                <div class="footer-dev">Desenvolvido por <a class="dev-link" href="https://willspacce.netlify.app/" target="_blank" rel="noopener noreferrer">DEV Willyan Martins</a></div>
+                <div class="footer-dev">Desenvolvido por <a class="dev-link" href="https://willspacce.netlify.app/" target="_blank" rel="noopener noreferrer" aria-label="Portfólio de Willyan Martins">Willyan Martins <span aria-hidden="true">›</span></a></div>
             </footer>
         </div>
     </main>

@@ -37,11 +37,20 @@ if ($globalTechnicalId>0 && !empty($_SESSION['erp_tenant_id'])) {
         if(!$tenant||!in_array(strtolower((string)$tenant['status']),['ativo','ativa','active'],true)||!empty($tenant['blocked']))throw new DomainException('Empresa indisponível.');
         $context=new \MiniErp\Context\TenantContext($globalTechnicalId,$tenantId,$tenantId);
         $connection=(new \MiniErp\Infrastructure\TenantConnectionResolver(__DIR__.'/../config.php'))->resolve($context);
-        $identity=new \MiniErp\Context\AuthenticatedTenantUser($globalTechnicalId,$tenantId,(string)$platformRecord['name'],(string)$platformRecord['email']);
+        $platformEmail = trim((string) $platformRecord['email']);
+        $technicalIdentityEmail = filter_var($platformEmail, FILTER_VALIDATE_EMAIL)
+            ? $platformEmail
+            : 'platform-admin-' . $globalTechnicalId . '@local.invalid';
+        $identity=new \MiniErp\Context\AuthenticatedTenantUser($globalTechnicalId,$tenantId,(string)$platformRecord['name'],$technicalIdentityEmail);
         $secureErpRuntime=['connection'=>$connection,'result'=>new \MiniErp\Services\ErpAuthenticationResult($identity,$context,$tenant),'user'=>['id'=>$globalTechnicalId,'nome'=>$platformRecord['name'],'email'=>$platformRecord['email'],'role'=>'admin','status'=>'ativo','tenant_id'=>$tenantId]];
         Database::useResolvedTenantConnection($connection);
-    } catch (Throwable) {
-        unset($_SESSION['erp_global_admin_id'],$_SESSION['erp_tenant_id'],$_SESSION['erp_tenant_slug']);header('Location: /login.php?error=session');exit;
+    } catch (Throwable $globalAccessError) {
+        error_log('GLOBAL_ERP_SESSION_RESTORE_FAILED type='.get_class($globalAccessError).' message='.substr($globalAccessError->getMessage(),0,300));
+        $failedTenantSlug = strtolower(trim((string) ($_SESSION['erp_tenant_slug'] ?? '')));
+        unset($_SESSION['erp_global_admin_id'],$_SESSION['erp_user_id'],$_SESSION['erp_tenant_id'],$_SESSION['erp_tenant_slug']);
+        session_write_close();
+        header('Location: /login.php'.($failedTenantSlug!==''?'?empresa='.rawurlencode($failedTenantSlug).'&error=session':'?error=session'));
+        exit;
     }
 } elseif ($hasErpSession) {
     require_once __DIR__ . '/../src/Contracts/ErpAuthenticationReaderContract.php';
@@ -115,6 +124,11 @@ if ($secureErpRuntime === null && !empty($pathSegments)) {
 
 // Define qual página de menu está ativa.
 $page = $_GET['page'] ?? 'dashboard';
+$erpPolicyRouteNotice = '';
+if (($erpAccessPolicy['access_mode'] ?? 'FULL') === 'READ_ONLY' && in_array($page, ['pedidos','fiscal_notes'], true)) {
+    $page = 'dashboard';
+    $erpPolicyRouteNotice = 'Modo consulta: Entrada, Saída, Pedidos Emitidos e Central de Notas estão temporariamente indisponíveis.';
+}
 $legacyMasterPages=['clientes'=>'cliente','fornecedores'=>'fornecedor','motoristas'=>'motorista','transportadoras'=>'transportadora'];
 if(isset($legacyMasterPages[$page])){$_GET['people_type']=$legacyMasterPages[$page];if(!empty($_GET['edit'])){$_GET['person']=(int)$_GET['edit'];$_GET['source_type']=$legacyMasterPages[$page];}$page='cadastro';$_GET['tab']='pessoas';}
 
@@ -123,9 +137,21 @@ $flash = [
     'success' => '',
     'error' => '',
 ];
+if ($erpPolicyRouteNotice !== '') $flash['error'] = $erpPolicyRouteNotice;
 $failedClienteData = null;
 $failedFormData = null;
 $failedFormAction = '';
+$erpAccessPolicy = ['access_mode'=>'FULL','can_issue_fiscal'=>1,'can_manage_users'=>1,'can_use_financial'=>1,'expires_at'=>null,'reason'=>''];
+if ($secureErpRuntime !== null && $globalTechnicalId === 0) {
+    require_once __DIR__ . '/../src/Repositories/TenantAccessPolicyRepository.php';
+    try {
+        $erpAccessPolicy = (new \MiniErp\Repositories\TenantAccessPolicyRepository($main))->effectiveForTenant((int)$_SESSION['erp_tenant_id']);
+        if (($erpAccessPolicy['access_mode'] ?? 'FULL') === 'BLOCKED') {
+            unset($_SESSION['erp_user_id'],$_SESSION['erp_tenant_id'],$_SESSION['erp_tenant_slug'],$_SESSION['user_id'],$_SESSION['tenant_id'],$_SESSION['current_company_id']);
+            header('Location: /login.php?error=policy_blocked'); exit;
+        }
+    } catch (Throwable $policyError) { error_log('TENANT_POLICY_READ_FAILED type='.get_class($policyError)); }
+}
 $restoredFormState = \MiniErp\Services\FlashFormState::consume($_SESSION);
 if ($restoredFormState !== null) {
     $failedFormAction = $restoredFormState['action'];
@@ -152,6 +178,9 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $action = $_POST['action'] ?? '';
 
     try {
+        if (($erpAccessPolicy['access_mode'] ?? 'FULL') === 'READ_ONLY' && $action !== 'logout') throw new RuntimeException('Empresa em modo somente consulta. Alterações estão temporariamente bloqueadas.');
+        if (in_array($action,['save_usuario','delete_usuario','approve_usuario','assign_user_company','create_admin_account'],true) && empty($erpAccessPolicy['can_manage_users'])) throw new RuntimeException('Gerenciamento de usuários bloqueado pelo Painel da Plataforma.');
+        if (in_array($action,['save_fiscal_order','save_fiscal_mirror','save_internal_fiscal_document'],true) && empty($erpAccessPolicy['can_issue_fiscal'])) throw new RuntimeException('Emissão fiscal bloqueada pelo Painel da Plataforma.');
         switch ($action) {
             case 'save_establishment':
                 if ($erpEstablishmentService === null || !hash_equals((string) $_SESSION['erp_establishment_csrf'], (string) ($_POST['csrf_token'] ?? ''))) throw new RuntimeException('Sessão fiscal inválida.');
@@ -839,6 +868,7 @@ if (is_dir($imagesDir)) {
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('style.css')) ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('issued-orders.css')) ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('erp-companies.css')) ?>">
+    <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('erp-companies-modern.css')) ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('app-ui.css')) ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('app-feedback.css')) ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('ui-forms.css')) ?>">
@@ -848,7 +878,7 @@ if (is_dir($imagesDir)) {
     <script src="<?= htmlspecialchars($assetUrl('app-ui.js')) ?>" defer></script>
     <script src="<?= htmlspecialchars($assetUrl('app-feedback.js')) ?>" defer></script>
 </head>
-<body>
+<body class="<?= ($erpAccessPolicy['access_mode'] ?? 'FULL') === 'READ_ONLY' ? 'erp-read-only' : '' ?>">
     <div id="page-loader" class="page-loader" aria-hidden="false">
         <div class="loader-inner">
             <?php if ($loaderGifUrl): ?>
@@ -861,15 +891,19 @@ if (is_dir($imagesDir)) {
     <div class="app-shell">
         <!-- Menu principal no topo (antes era sidebar) -->
         
-        <button id="hamburger" class="hamburger" aria-label="Abrir menu" aria-expanded="false">☰</button>
+        <button id="hamburger" class="hamburger" aria-label="Abrir menu" aria-controls="sidebar-drawer" aria-expanded="false">☰</button>
 
         <div id="drawer-backdrop" class="drawer-backdrop" aria-hidden="true"></div>
 
         <aside id="sidebar-drawer" class="sidebar-drawer" aria-hidden="true">
             <div class="drawer-inner">
+                <div class="drawer-mobile-head">
+                    <div><strong>Menu principal</strong><span>Navegue pelo Mini ERP</span></div>
+                    <button type="button" class="drawer-close" data-drawer-close aria-label="Fechar menu">×</button>
+                </div>
                 <ul class="drawer-cats">
                     <li class="drawer-cat">
-                        <a href="?page=dashboard" class="cat-link"><i data-feather="home"></i><span>Dashboard</span></a>
+                        <a href="?page=dashboard" class="cat-link <?= $page === 'dashboard' ? 'active' : '' ?>"><i data-feather="home"></i><span>Dashboard</span></a>
                     </li>
 
                     <li class="drawer-cat">
@@ -965,6 +999,12 @@ if (is_dir($imagesDir)) {
                     <?php endif; ?>
                 </div>
             </header>
+
+            <?php if (($erpAccessPolicy['access_mode'] ?? 'FULL') === 'READ_ONLY'): ?>
+                <div class="alert warning"><strong>Modo somente consulta.</strong> Alterações estão bloqueadas<?= !empty($erpAccessPolicy['expires_at']) ? ' até '.htmlspecialchars(date('d/m/Y H:i', strtotime((string)$erpAccessPolicy['expires_at']))) : '' ?>.</div>
+            <?php elseif (empty($erpAccessPolicy['can_issue_fiscal'])): ?>
+                <div class="alert warning"><strong>Emissão fiscal bloqueada.</strong> A consulta dos dados continua disponível.</div>
+            <?php endif; ?>
 
             <!-- Mensagens de feedback ao usuário -->
             <?php if (!empty($flash['success'])): ?>
@@ -1460,13 +1500,14 @@ if (is_dir($imagesDir)) {
                                     const fiscalAction=submitter.dataset.fiscalAction;if(!fiscalAction)return;
                                     event.preventDefault();if(submitter.dataset.busy==='1')return;submitter.dataset.busy='1';submitter.disabled=true;
                                     const label=submitter.querySelector('[data-order-label]');const oldLabel=label?.textContent||'';if(label)label.textContent=fiscalAction==='preview'?'Gerando prévia...':'Preparando nota...';submitter.setAttribute('aria-busy','true');
-                                    let previewWindow=null;if(fiscalAction==='preview'){previewWindow=window.open('','_blank');if(previewWindow)previewWindow.document.write('<!doctype html><meta charset="utf-8"><title>Gerando prévia</title><p style="font:16px sans-serif;padding:30px">Gerando prévia do pedido...</p>');}
+                                    const mobilePreview=fiscalAction==='preview'&&window.matchMedia('(max-width: 899px), (pointer: coarse)').matches;
+                                    let previewWindow=null;if(fiscalAction==='preview'&&!mobilePreview){previewWindow=window.open('','_blank');if(previewWindow)previewWindow.document.write('<!doctype html><meta charset="utf-8"><title>Gerando prévia</title><p style="font:16px sans-serif;padding:30px">Gerando prévia do pedido...</p>');}
                                     const data=new FormData(form);data.set('fiscal_action',fiscalAction);data.set('idempotency_key',form.querySelector('[name="idempotency_key"]')?.value||'');
                                     try{
-                                        const response=await fetch('fiscal_action.php',{method:'POST',body:data,credentials:'same-origin',headers:{Accept:'application/json'}});const result=await response.json();
+                                        const response=await fetch('fiscal_action.php',{method:'POST',body:data,credentials:'same-origin',headers:{Accept:'application/json'}});const result=await response.json().catch(()=>({success:false,error_message:'O servidor retornou uma resposta inválida. Tente novamente.'}));
                                         if(!response.ok||!result.success)throw Object.assign(new Error(result.error_message||'Não foi possível concluir a rotina.'),{notesUrl:result.notes_url});
                                         const orderField=form.querySelector('[name="order_id"]');if(orderField&&result.order_id)orderField.value=String(result.order_id);
-                                        if(fiscalAction==='preview'){if(previewWindow&&result.danfe_url)previewWindow.location.href=result.danfe_url;else if(previewWindow)previewWindow.close();return;}
+                                        if(fiscalAction==='preview'){if(result.danfe_url){if(previewWindow)previewWindow.location.href=result.danfe_url;else location.href=result.danfe_url;}else if(previewWindow)previewWindow.close();return;}
                                         if(previewWindow)previewWindow.close();location.href=result.notes_url||'?page=fiscal_notes';
                                     }catch(error){if(previewWindow){previewWindow.document.body.innerHTML='<p style="font:16px sans-serif;padding:30px">Não foi possível gerar a prévia. Volte ao ERP, revise os dados e tente novamente.</p>';}showError(error.message||'Não foi possível concluir. Os dados foram preservados.');if(error.notesUrl&&fiscalAction!=='preview')location.href=error.notesUrl;}
                                     finally{submitter.dataset.busy='0';submitter.disabled=false;submitter.removeAttribute('aria-busy');if(label)label.textContent=oldLabel;}
@@ -2478,10 +2519,68 @@ if (is_dir($imagesDir)) {
                                 <p class="eyebrow">Segurança</p>
                                 <h2>Funcionários / Usuários</h2>
                             </div>
-                            <a class="btn primary" href="?page=configuracao&tab=usuarios">Gerenciar Usuários</a>
+                            <button class="btn primary" type="button" data-user-modal-open>+ Novo usuário</button>
                         </section>
 
+                        <div class="panel user-management-panel">
+                            <div class="user-management-summary">
+                                <div><strong><?= count($usuarios) ?></strong><span>usuários da empresa</span></div>
+                                <p>Crie acessos, vincule ao cadastro de pessoas e defina as permissões de cada usuário.</p>
+                            </div>
+                            <div class="user-list-wrap">
+                                <table class="user-management-table">
+                                    <thead><tr><th>Usuário</th><th>Pessoa vinculada</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead>
+                                    <tbody>
+                                    <?php foreach ($usuarios as $u): ?>
+                                        <tr>
+                                            <td data-label="Usuário"><strong><?= htmlspecialchars($u['nome']) ?></strong><small><?= htmlspecialchars($u['email']) ?></small></td>
+                                            <td data-label="Pessoa"><?= !empty($u['pessoa_nome']) ? htmlspecialchars($u['pessoa_nome']) : '<span class="user-unlinked">Sem vínculo</span>' ?></td>
+                                            <td data-label="Perfil"><?= htmlspecialchars($u['cargo'] ?: $u['role']) ?></td>
+                                            <td data-label="Status"><span class="status-badge <?= ($u['status'] ?? '') === 'ativo' ? 'success' : '' ?>"><?= htmlspecialchars($u['status'] ?? 'inativo') ?></span></td>
+                                            <td data-label="Ações" class="user-row-actions">
+                                                <button class="btn small" type="button" data-user-edit="<?= (int)$u['id'] ?>">Editar</button>
+                                                <form method="POST"><input type="hidden" name="action" value="delete_usuario"><input type="hidden" name="id" value="<?= (int)$u['id'] ?>"><button class="btn ghost small" type="submit" onclick="return confirm('Remover usuário?')">Remover</button></form>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                    <?php if (!$usuarios): ?><tr><td colspan="5" class="empty-state">Nenhum usuário cadastrado.</td></tr><?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="user-modal" data-user-modal hidden aria-hidden="true">
+                            <div class="user-modal__backdrop" data-user-modal-close></div>
+                            <section class="user-modal__surface" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
+                                <header class="user-modal__header"><div><small>Usuários da empresa</small><h3 id="user-modal-title">Novo usuário</h3></div><button type="button" data-user-modal-close aria-label="Fechar">×</button></header>
+                                <form method="POST" data-user-form>
+                                    <input type="hidden" name="action" value="save_usuario"><input type="hidden" name="id" value="">
+                                    <nav class="user-form-tabs" role="tablist">
+                                        <button type="button" class="active" data-user-tab="access" role="tab">Dados de acesso</button>
+                                        <button type="button" data-user-tab="person" role="tab">Vínculo com pessoa</button>
+                                        <button type="button" data-user-tab="permissions" role="tab">Permissões</button>
+                                    </nav>
+                                    <div class="user-modal__body">
+                                        <div class="user-tab-panel active" data-user-panel="access">
+                                            <div class="form-grid two-columns"><label>Nome completo <input name="nome" required autocomplete="name"></label><label>E-mail de acesso <input type="email" name="email" required autocomplete="email"></label><label>Senha <input type="password" name="senha" autocomplete="new-password" placeholder="Obrigatória para novo usuário"></label><label>Cargo <select name="cargo"><option value="funcionario">Funcionário</option><option value="vendedor">Vendedor</option><option value="motorista">Motorista</option><option value="transportadora">Transportadora</option><option value="admin">Administrador</option></select></label><label>Perfil de acesso <select name="role"><option value="user">Usuário</option><option value="admin">Administrador</option></select></label><label>Status <select name="status"><option value="ativo">Ativo</option><option value="inativo">Inativo</option></select></label></div>
+                                        </div>
+                                        <div class="user-tab-panel" data-user-panel="person">
+                                            <div class="user-person-help"><strong>Vincular a uma pessoa cadastrada</strong><p>O vínculo é opcional e permite identificar qual pessoa utiliza este acesso.</p></div>
+                                            <label>Pessoa <select name="pessoa_id"><option value="">Sem vínculo</option><?php foreach ($clientes as $person): ?><option value="<?= (int)$person['id'] ?>"><?= htmlspecialchars($person['nome']) ?><?= !empty($person['cpf_cnpj']) ? ' — '.htmlspecialchars($person['cpf_cnpj']) : '' ?></option><?php endforeach; ?></select></label>
+                                            <a class="btn secondary" href="?page=cadastro&tab=pessoas">Abrir cadastro de pessoas</a>
+                                        </div>
+                                        <div class="user-tab-panel" data-user-panel="permissions">
+                                            <div class="user-permission-grid"><?php foreach (['vendas:view'=>'Ver vendas','vendas:edit'=>'Editar vendas','produtos:view'=>'Ver produtos','produtos:edit'=>'Editar produtos','relatorios:view'=>'Ver relatórios','config:manage'=>'Gerenciar configurações','clientes:manage'=>'Gerenciar pessoas'] as $key=>$label): ?><label><input type="checkbox" name="permissions[]" value="<?= htmlspecialchars($key) ?>"><span><?= htmlspecialchars($label) ?></span></label><?php endforeach; ?></div>
+                                        </div>
+                                    </div>
+                                    <footer class="user-modal__footer"><button class="btn secondary" type="button" data-user-modal-close>Cancelar</button><button class="btn primary" type="submit">Salvar usuário</button></footer>
+                                </form>
+                            </section>
+                        </div>
+                        <script>window.ERP_COMPANY_USERS=<?= json_encode($usuarios, JSON_UNESCAPED_UNICODE|JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>;</script>
+
                         <!-- Painel rápido para criar/atualizar conta administrativa (agora dentro de Usuários) -->
+                        <?php if (false): ?>
                         <div class="panel">
                             <p>Use este formulário para criar ou atualizar rapidamente a conta administrativa (role = admin). O e-mail será marcado como verificado automaticamente.</p>
                             <form method="POST" class="form-grid" style="max-width:420px;">
@@ -2597,6 +2696,7 @@ if (is_dir($imagesDir)) {
                                 </table>
                             </div>
                         </div>
+                        <?php endif; ?>
                     <?php endif; ?>
                     <?php
                     break;
@@ -2989,6 +3089,7 @@ if (is_dir($imagesDir)) {
                     break;
             }
             ?>
+            <footer class="site-credit erp-credit">Desenvolvido por <a href="https://willspacce.netlify.app/" target="_blank" rel="noopener noreferrer" aria-label="Portfólio de Willyan Martins">Willyan Martins <span aria-hidden="true">›</span></a></footer>
         </main>
     </div>
     <?php if ($page === 'dashboard'): ?><script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script><?php endif; ?>

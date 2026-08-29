@@ -17,6 +17,13 @@ if ($tenantId < 1 || $userId < 1) {
     echo json_encode(['success' => false, 'error_code' => 'UNAUTHENTICATED', 'error_message' => 'Sessão expirada.']);
     exit;
 }
+try {
+    $policyMain=(new \MiniErp\Infrastructure\ControlPlaneConnectionFactory(__DIR__.'/../config.php'))->create();
+    $fiscalPolicy=(new \MiniErp\Repositories\TenantAccessPolicyRepository($policyMain))->effectiveForTenant($tenantId);
+    if (empty($_SESSION['erp_global_admin_id']) && (($fiscalPolicy['access_mode']??'FULL')!=='FULL'||empty($fiscalPolicy['can_issue_fiscal']))) {
+        http_response_code(403);echo json_encode(['success'=>false,'error_code'=>'TENANT_FISCAL_BLOCKED','error_message'=>'Emissão fiscal bloqueada pelo Painel da Plataforma.'],JSON_UNESCAPED_UNICODE);exit;
+    }
+} catch (Throwable $policyError) { error_log('FISCAL_POLICY_READ_FAILED tenant='.$tenantId.' type='.get_class($policyError)); }
 if (($_SERVER['HTTP_SEC_FETCH_SITE'] ?? 'same-origin') === 'cross-site') {
     http_response_code(403);
     echo json_encode(['success' => false, 'error_code' => 'REQUEST_NOT_ALLOWED', 'error_message' => 'Origem da requisição não permitida.']);
@@ -24,7 +31,10 @@ if (($_SERVER['HTTP_SEC_FETCH_SITE'] ?? 'same-origin') === 'cross-site') {
 }
 $csrfSession = (string)($_SESSION['erp_fiscal_csrf'] ?? '');
 $csrfCookie = (string)($_COOKIE['erp_fiscal_csrf'] ?? '');
-if ($csrfSession === '' || $csrfCookie === '' || !hash_equals($csrfSession, $csrfCookie)) {
+$csrfPosted = (string)($_POST['csrf_token'] ?? '');
+$validCsrfCookie = $csrfSession !== '' && $csrfCookie !== '' && hash_equals($csrfSession, $csrfCookie);
+$validCsrfPost = $csrfSession !== '' && $csrfPosted !== '' && hash_equals($csrfSession, $csrfPosted);
+if (!$validCsrfCookie && !$validCsrfPost) {
     http_response_code(403);
     echo json_encode(['success' => false, 'error_code' => 'CSRF_INVALID', 'error_message' => 'Token CSRF fiscal inválido.']);
     exit;
@@ -52,7 +62,7 @@ try {
     $pdo = new PDO("mysql:host={$d['host']};port={$d['port']};dbname={$db};charset=utf8mb4", $d['username'], $d['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
     $operations = new FiscalOperationRepository($pdo, $tenantId);
     $action = (string)($_POST['fiscal_action'] ?? '');
-    if(in_array($action,['retry','transmit'],true)&&!hash_equals($csrfSession,(string)($_POST['csrf_token']??'')))throw new RuntimeException('CSRF_INVALID');
+    if(in_array($action,['retry','transmit'],true)&&!$validCsrfPost)throw new RuntimeException('CSRF_INVALID');
     if(in_array($action,['preview','finalize','mirror','note'],true)&&!in_array((string)($_POST['fiscal_model']??''),['55','65'],true))throw new RuntimeException('FISCAL_DOCUMENT_MODEL_UNSUPPORTED');
     if(in_array($action,['preview','finalize','mirror','note'],true))$_POST['operation_nature']=$operations->validatedOperationNature($_POST,(int)($_POST['order_id']??0));
 

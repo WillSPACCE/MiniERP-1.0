@@ -6,7 +6,7 @@ use MiniErp\Repositories\PlatformTenantRepository;
 use MiniErp\Services\PlatformTenantLifecycle;
 
 require_once __DIR__ . '/_context.php';
-[$connection] = requireAuthorizedPlatformContext();
+[$connection, , , $identity] = requireAuthorizedPlatformContext();
 require_once __DIR__ . '/../../src/Contracts/PlatformTenantRepositoryContract.php';
 require_once __DIR__ . '/../../src/Repositories/PlatformTenantRepository.php';
 require_once __DIR__ . '/../../src/Services/PlatformTenantLifecycle.php';
@@ -32,7 +32,50 @@ if ($tenant === null || !isset($actionMap[$requestedAction])) {
         $message = 'Esta ação não é permitida no estado atual da empresa.';
     } else {
         if ($requestedAction === 'erp') {
-            header('Location: /login.php?empresa=' . rawurlencode((string) $tenant['slug']));
+            $csrf = (string) ($_SESSION['platform_erp_access_csrf'] ?? '');
+            if ($csrf === '' || !hash_equals($csrf, (string) ($_GET['csrf_token'] ?? ''))) {
+                http_response_code(403);
+                exit('Sessão expirada. Volte ao painel e tente novamente.');
+            }
+            if (!in_array($identity->getRole(), ['SUPER_ADMIN', 'GLOBAL_TECH'], true)) {
+                http_response_code(403);
+                exit('Seu perfil não possui acesso técnico ao ERP.');
+            }
+
+            // O painel usa um cookie isolado. Fechamos essa sessão antes de abrir a
+            // sessão normal do ERP, preservando o isolamento entre os dois runtimes.
+            session_write_close();
+            session_name('PHPSESSID');
+            session_set_cookie_params([
+                'httponly' => true,
+                'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+                'samesite' => 'Lax',
+                'path' => '/',
+            ]);
+            session_start();
+            session_regenerate_id(true);
+            $_SESSION['erp_global_admin_id'] = $identity->getUserId();
+            $_SESSION['erp_user_id'] = $identity->getUserId();
+            $_SESSION['erp_tenant_id'] = $tenantId;
+            $_SESSION['erp_tenant_slug'] = (string) $tenant['slug'];
+            foreach (['user_id', 'tenant_id', 'current_company_id'] as $legacySessionKey) {
+                unset($_SESSION[$legacySessionKey]);
+            }
+            (new \MiniErp\Repositories\PlatformAdminRepository($connection))->audit(
+                $identity->getUserId(),
+                'GLOBAL_ERP_LOGIN',
+                'tenant',
+                (string) $tenantId,
+                $_SERVER['REMOTE_ADDR'] ?? null,
+                ['slug' => (string) $tenant['slug'], 'source' => 'PLATFORM_SSO']
+            );
+            // Persiste o novo PHPSESSID antes do navegador seguir o redirect.
+            // Isso evita perder a sessão em navegadores móveis, que podem abrir o
+            // próximo request imediatamente após receber o cabeçalho Location.
+            session_write_close();
+            header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+            header('Pragma: no-cache');
+            header('Location: /?page=dashboard', true, 303);
             exit;
         }
         $message = 'Ação disponível no lifecycle, mas ainda em implementação. Nenhuma alteração foi executada.';

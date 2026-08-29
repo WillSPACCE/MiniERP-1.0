@@ -155,6 +155,39 @@ button:focus { outline: none; }
 
 @media (max-width:480px){ .login-footer { position: static; margin-top:12px; } }
 
+/* Login mobile: remove o slider desktop e prioriza acesso rápido à empresa. */
+@media (max-width:700px){
+  html,body{min-height:100%;}
+  body{overflow-x:hidden;}
+  .login-shell{align-items:flex-start;min-height:100dvh;padding:16px 12px;background:linear-gradient(180deg,#edf4ff 0%,#f8faff 100%);animation:none;}
+  .login-shell .container{display:flex;flex-direction:column;width:100%;max-width:430px;min-height:0;margin:auto;border:1px solid #dbe5f2;border-radius:18px;overflow:hidden;box-shadow:0 18px 45px rgba(21,41,81,.14);}
+  .login-shell .sign-up-container,.login-shell .overlay-container{display:none!important;}
+  .login-shell .sign-in-container{position:relative;inset:auto;display:block;width:100%;height:auto;min-height:0;transform:none!important;opacity:1;z-index:2;}
+  .login-shell .sign-in-container form{display:flex;width:100%;height:auto;min-height:0;padding:26px 20px 20px;text-align:left;align-items:stretch;justify-content:flex-start;}
+  .login-shell .sign-in-container h1{margin:0 0 12px;text-align:center;font-size:25px;}
+  .login-shell .social-container,.login-shell .sign-in-container form>span{display:none;}
+  .tenant-login-name{margin:0 0 10px;padding:10px 12px;border-radius:9px;background:#edf4ff;color:#204ea5;font-weight:800;text-align:center;overflow-wrap:anywhere;}
+  .tenant-login-logo{display:flex;justify-content:center;margin:0 0 10px;}
+  .tenant-login-logo img{display:block;max-width:180px;max-height:54px;width:auto;height:auto;object-fit:contain;}
+  .login-shell input{min-height:50px;margin:7px 0;padding:12px 14px;border:1px solid #d7e0ec;border-radius:10px;background:#f8fafc;font-size:16px;}
+  .login-shell input:focus{outline:3px solid rgba(47,111,237,.18);border-color:#2f6fed;background:#fff;}
+  .login-shell .password-wrap{position:relative;width:100%;}
+  .login-shell .password-wrap input{padding-right:52px;}
+  .login-shell .toggle-password{right:6px;top:50%;width:42px;min-height:42px;padding:0;border:0;background:transparent;color:#204ea5;letter-spacing:0;transform:translateY(-50%);}
+  .login-shell .forgot-link{align-self:flex-end;margin:8px 0 15px;padding:5px 0;font-size:13px;}
+  .login-shell #loginBtn{width:100%;min-height:50px;padding:12px 18px;border-radius:11px;font-size:14px;}
+  .login-shell .login-error{padding:10px 12px;border:1px solid #fecaca;border-radius:9px;background:#fef2f2;text-align:center;}
+  .login-shell .login-footer{position:static;order:3;margin:0;padding:14px 16px 16px;border-top:1px solid #e7edf5;background:#f8faff;}
+  .login-shell .login-footer-logo{max-width:150px;max-height:34px;}
+  .login-shell .footer-dev{font-size:11px;}
+}
+
+@media (max-width:360px){
+  .login-shell{padding:8px;}
+  .login-shell .container{border-radius:14px;}
+  .login-shell .sign-in-container form{padding:22px 15px 18px;}
+}
+
 /* small auth card used by forgot/reset */
 .auth-container{ display:flex; align-items:center; justify-content:center; min-height:60vh; }
 .form-card{ background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:28px; width:100%; max-width:520px; box-shadow: 0 20px 60px rgba(21,41,81,0.06); }
