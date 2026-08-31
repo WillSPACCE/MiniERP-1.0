@@ -69,7 +69,7 @@ function renderPlatformStart(object $identity, string $title, string $breadcrumb
 <div class="platform-shell">
     <aside class="platform-sidebar">
         <div class="platform-brand">
-            <img class="platform-brand-logo" src="/assets/images/mini-erp-logo.png" alt="Mini ERP Web">
+            <a class="platform-brand-home" href="/plataforma/" aria-label="Voltar ao Dashboard da plataforma" title="Voltar ao Dashboard"><img class="platform-brand-logo" src="/assets/images/mini-erp-logo.png" alt="Mini ERP Web"></a>
             <div>
                 <strong>Mini ERP</strong>
                 <small>Control-Plane</small>

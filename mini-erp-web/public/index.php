@@ -978,7 +978,7 @@ if (is_dir($imagesDir)) {
             <!-- Cabeçalho da aplicação -->
             <header class="topbar">
                 <div class="brand">
-                    <img src="<?= htmlspecialchars($logoUrl) ?>" alt="Mini ERP Web" class="site-logo" onerror="this.style.display='none'">
+                    <a class="brand-home-link" href="?page=dashboard" aria-label="Voltar ao Dashboard" title="Voltar ao Dashboard"><img src="<?= htmlspecialchars($logoUrl) ?>" alt="Mini ERP Web" class="site-logo" onerror="this.style.display='none'"></a>
                 </div>
 
                 <nav class="topnav">

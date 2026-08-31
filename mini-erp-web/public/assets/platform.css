@@ -80,7 +80,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .platform-brand strong { display: block; font-size: 14px; }
 .platform-brand small { display: block; color: #b9c9e7; font-size: 11px; margin-top: 2px; }
 .platform-brand-logo { width: 154px; height: 56px; object-fit: contain; object-position: left center; }
-.platform-brand-logo + div { display: none; }
+.platform-brand-home { display: inline-flex; align-items: center; border-radius: 10px; }
+.platform-brand-home:focus-visible { outline: 3px solid #69a7ff; outline-offset: 3px; }
+.platform-brand-home + div { display: none; }
 .platform-nav { display: grid; gap: 6px; }
 .platform-nav a, .platform-nav span {
   display: flex;

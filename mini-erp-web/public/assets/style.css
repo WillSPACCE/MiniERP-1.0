@@ -168,6 +168,7 @@ body.page-ready .main-content {
     display: block;
     object-fit: contain;
 }
+.brand-home-link{display:inline-flex;align-items:center;border-radius:12px;text-decoration:none}.brand-home-link:focus-visible{outline:3px solid color-mix(in srgb,var(--primary) 42%,transparent);outline-offset:4px}
 
 .brand-text { display:flex; align-items:center; gap:12px; }
 .brand-text h1 { margin:0; font-size:1.05rem; }
