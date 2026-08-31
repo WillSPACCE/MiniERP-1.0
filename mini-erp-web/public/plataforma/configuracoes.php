@@ -33,6 +33,11 @@ $futureHostname=trim($settings['planned_subdomain'].'.'.$settings['planned_domai
 $domainPrepared=$settings['planned_domain']!=='';
 $cloudflarePrepared=$settings['cloudflare_account_id']!==''&&$settings['cloudflare_zone_id']!=='';
 $tunnelPrepared=$settings['cloudflare_tunnel_id']!==''&&$tokenConfigured;
+$oauthProviders=[
+ 'Google'=>['MINI_ERP_GOOGLE_CLIENT_ID','MINI_ERP_GOOGLE_CLIENT_SECRET'],
+ 'Facebook'=>['MINI_ERP_FACEBOOK_CLIENT_ID','MINI_ERP_FACEBOOK_CLIENT_SECRET'],
+ 'LinkedIn'=>['MINI_ERP_LINKEDIN_CLIENT_ID','MINI_ERP_LINKEDIN_CLIENT_SECRET'],
+];
 $e=static fn($v)=>platformEscape($v);
 renderPlatformStart($identity,'Configurações','Infraestrutura e servidores');
 ?>
@@ -81,4 +86,5 @@ renderPlatformStart($identity,'Configurações','Infraestrutura e servidores');
  <section class="panel settings-section readonly-settings"><div class="panel-header"><div><h2>Ambiente detectado</h2><span class="muted">Informações sensíveis permanecem ocultas e não podem ser alteradas nesta tela.</span></div></div><dl><div><dt>Banco</dt><dd><?=$e($db['database']??'—')?></dd></div><div><dt>Host</dt><dd><?=$e($db['host']??'—')?></dd></div><div><dt>Porta</dt><dd><?=$e($db['port']??'—')?></dd></div><div><dt>Servidor web</dt><dd><?=$e($_SERVER['SERVER_SOFTWARE']??'PHP local')?></dd></div></dl></section>
  <div class="settings-actions"><span class="muted"><?=$canEdit?'Alterações são registradas na auditoria.':'Seu perfil está em modo consulta.'?></span><button class="btn" type="submit" <?=$canEdit?'':'disabled'?>>Salvar configurações</button></div>
 </form>
+<section class="panel settings-section readonly-settings"><div class="panel-header"><div><h2>Login social das empresas</h2><span class="muted">As chaves ficam somente nas variáveis de ambiente do servidor. Depois de configuradas, os botões usam o link de login da empresa e criam uma solicitação pendente.</span></div></div><dl><?php foreach($oauthProviders as $provider=>$environmentNames):$ready=true;foreach($environmentNames as $environmentName)$ready=$ready&&trim((string)getenv($environmentName))!=='';?><div><dt><?=$e($provider)?></dt><dd><strong class="<?=$ready?'status-ok':'status-pending'?>"><?=$ready?'Configurado':'Pendente'?></strong><small><?= $e(implode(' + ', $environmentNames)) ?></small></dd></div><?php endforeach;?></dl><p class="muted">URL de retorno para cadastrar em cada provedor: <code><?= $e(($settings['public_base_url']?:'https://seu-dominio').'/oauth.php') ?></code></p></section>
 <?php renderPlatformEnd();

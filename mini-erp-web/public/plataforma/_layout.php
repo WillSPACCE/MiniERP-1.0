@@ -50,10 +50,10 @@ function renderPlatformStart(object $identity, string $title, string $breadcrumb
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>{$pageTitle} — Painel da Plataforma</title>
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
-    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png">
-    <link rel="stylesheet" href="/assets/platform.css?v=mobile6">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png?v=round1">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png?v=round1">
+    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png?v=round1">
+    <link rel="stylesheet" href="/assets/platform.css?v=mobile7">
     <link rel="stylesheet" href="/assets/platform-audit.css?v=2">
     <link rel="stylesheet" href="/assets/platform-audit-simple.css?v=3">
     <link rel="stylesheet" href="/assets/platform-audit-table.css?v=1">

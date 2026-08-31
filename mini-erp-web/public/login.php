@@ -60,7 +60,15 @@ if (!empty($_GET['error'])) {
     }
 }
 if (!empty($_GET['registered'])) {
-    $loginError = 'Conta criada. Verifique seu e-mail para confirmar o acesso.';
+    $loginError = 'Solicitação enviada. O administrador da empresa precisa ativar seu acesso como usuário ou administrador.';
+}
+if (!empty($_GET['registration_error'])) {
+    $loginError = (string)($_SESSION['registration_error'] ?? 'Não foi possível concluir o cadastro. Tente novamente.');
+    unset($_SESSION['registration_error']);
+}
+if (!empty($_GET['oauth_error'])) {
+    $loginError = (string)($_SESSION['oauth_error'] ?? 'Não foi possível entrar com a rede social.');
+    unset($_SESSION['oauth_error']);
 }
 
 if ($tenantUnavailable) {
@@ -116,14 +124,14 @@ $_SESSION['erp_login_csrf'] ??= bin2hex(random_bytes(32));
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
-    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png?v=round1">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png?v=round1">
+    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png?v=round1">
     <title>Login - Mini ERP</title>
     <!-- Favicons and manifest -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/Favicon-v2/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/Favicon-v2/apple-touch-icon.png?v=round1">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png?v=round1">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png?v=round1">
     <link rel="manifest" href="/assets/images/site.webmanifest">
     <meta name="theme-color" content="#1e88e5">
     <meta name="description" content="Acesse o Mini ERP - sistema de gestão">
@@ -135,20 +143,21 @@ $_SESSION['erp_login_csrf'] ??= bin2hex(random_bytes(32));
     <main class="login-shell">
         <div class="container" id="container">
             <div class="form-container sign-up-container">
-                <form method="POST" action="/?page=save_usuario">
-                    <input type="hidden" name="action" value="save_usuario">
+                <form method="POST" action="/register.php">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['erp_login_csrf'], ENT_QUOTES, 'UTF-8') ?>">
+                    <input type="hidden" name="empresa" value="<?= htmlspecialchars($tenantSlug, ENT_QUOTES, 'UTF-8') ?>">
                     <h1>Criar Conta</h1>
                     <div class="social-container">
-                        <a href="#" class="social">f</a>
-                        <a href="#" class="social">G</a>
-                        <a href="#" class="social">in</a>
+                        <a href="/oauth.php?provider=facebook&amp;empresa=<?= rawurlencode($tenantSlug) ?>" class="social" aria-label="Cadastrar com Facebook">f</a>
+                        <a href="/oauth.php?provider=google&amp;empresa=<?= rawurlencode($tenantSlug) ?>" class="social" aria-label="Cadastrar com Google">G</a>
+                        <a href="/oauth.php?provider=linkedin&amp;empresa=<?= rawurlencode($tenantSlug) ?>" class="social" aria-label="Cadastrar com LinkedIn">in</a>
                     </div>
                     <span>ou use seu e-mail para registro</span>
                     <input type="text" name="nome" placeholder="Nome" required />
                     <input type="email" name="email" placeholder="Email" required />
-                    <input type="password" name="senha" placeholder="Senha" required />
-                    <input type="hidden" name="role" value="user">
-                    <button type="submit" class="btn primary" id="signupBtnForm">Registrar</button>
+                    <input type="tel" name="telefone" placeholder="Telefone (opcional)" autocomplete="tel" />
+                    <input type="password" name="senha" placeholder="Senha (mínimo 8 caracteres)" minlength="8" required />
+                    <button type="submit" class="btn primary" id="signupBtnForm" <?= !$tenantLogin || $tenantUnavailable ? 'disabled' : '' ?>>Solicitar acesso</button>
                 </form>
             </div>
             <div class="form-container sign-in-container">
@@ -166,9 +175,9 @@ $_SESSION['erp_login_csrf'] ??= bin2hex(random_bytes(32));
                         <?php endif; ?>
                     <?php endif; ?>
                     <div class="social-container">
-                        <a href="#" class="social">f</a>
-                        <a href="#" class="social">G</a>
-                        <a href="#" class="social">in</a>
+                        <a href="/oauth.php?provider=facebook&amp;empresa=<?= rawurlencode($tenantSlug) ?>" class="social" aria-label="Continuar com Facebook">f</a>
+                        <a href="/oauth.php?provider=google&amp;empresa=<?= rawurlencode($tenantSlug) ?>" class="social" aria-label="Continuar com Google">G</a>
+                        <a href="/oauth.php?provider=linkedin&amp;empresa=<?= rawurlencode($tenantSlug) ?>" class="social" aria-label="Continuar com LinkedIn">in</a>
                     </div>
                     <span>ou use sua conta</span>
                     <input type="email" name="email" placeholder="Email" autocomplete="username" required />

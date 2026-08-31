@@ -22,7 +22,12 @@ final class ErpAuthenticationService
         $email = strtolower(trim($email));
         $slug = strtolower(trim($slug));
         $tenant = $this->reader->findTenantBySlug($slug);
-        $user = $email !== '' ? $this->reader->findUserByEmail($email) : null;
+        $user = null;
+        if ($email !== '' && $tenant !== null && method_exists($this->reader, 'findUserByEmailForTenant')) {
+            $user = $this->reader->findUserByEmailForTenant($email, (int)$tenant['tenant_id']);
+        } elseif ($email !== '') {
+            $user = $this->reader->findUserByEmail($email);
+        }
 
         if (!$this->tenantIsAvailable($tenant)
             || $user === null

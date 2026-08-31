@@ -20,6 +20,15 @@ final class MainDbErpAuthenticationReader implements ErpAuthenticationReaderCont
         return $statement->fetch() ?: null;
     }
 
+    public function findUserByEmailForTenant(string $email, int $tenantId): ?array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT id, nome, email, senha, status, tenant_id FROM usuarios WHERE tenant_id=:tenant AND LOWER(email)=LOWER(:email) LIMIT 1'
+        );
+        $statement->execute(['tenant'=>$tenantId,'email'=>$email]);
+        return $statement->fetch() ?: null;
+    }
+
     public function findUserById(int $userId): ?array
     {
         $statement = $this->pdo->prepare(

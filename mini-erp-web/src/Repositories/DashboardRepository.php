@@ -86,13 +86,30 @@ final class DashboardRepository
         $notes=$this->notesAnalytics($filters);
         $lowStock=$this->lowStockProducts();
         $soldItems=$this->soldItemsSummary($salesWhere,$salesParams);
+        $stock=$this->stockSummary();
         return[
-            'clientes'=>$this->countMaster('clientes'),'produtos'=>$this->countMaster('produtos'),'vendas'=>$salesCount,'faturamento'=>$revenue,
+            'clientes'=>$this->countMaster('clientes'),'produtos'=>$this->countMaster('produtos'),'vendas'=>$salesCount,'issued_orders'=>$this->issuedOrdersCount($filters),'faturamento'=>$revenue,
             'ticket_average'=>$salesCount>0?$revenue/$salesCount:0.0,'largest_sale'=>(float)($summary['largest_sale']??0),'sales_by_day'=>$byDay,
             'top_products'=>$topProducts,'last_sold_items'=>$lastItems,'top_customers'=>$topCustomers,'best_customer'=>$topCustomers[0]??null,
-            'notes'=>$notes,'low_stock_products'=>$lowStock,'estoque_baixo'=>count($lowStock),
+            'notes'=>$notes,'low_stock_products'=>$lowStock,'estoque_baixo'=>count($lowStock),'stock_balance'=>$stock['balance'],'stock_products'=>$stock['products'],
             'stock'=>['sold_item_lines'=>$soldItems['lines'],'sold_quantity'=>$soldItems['quantity'],'movement'=>$this->stockMovementSource()],
         ];
+    }
+
+    private function issuedOrdersCount(array$filters):int
+    {
+        $sql="SELECT COUNT(*) FROM fiscal_orders o LEFT JOIN fiscal_documents d ON d.id=(SELECT MAX(d2.id) FROM fiscal_documents d2 WHERE d2.tenant_id=o.tenant_id AND d2.source_order_id=o.id) WHERE o.tenant_id=:tenant AND o.operation_date BETWEEN :date_from AND :date_to AND d.id IS NULL";
+        $statement=$this->pdo->prepare($sql);$statement->execute(['tenant'=>$this->tenantId,'date_from'=>$filters['from'],'date_to'=>$filters['to']]);return(int)$statement->fetchColumn();
+    }
+
+    private function stockSummary():array
+    {
+        $tenantWhere=$this->columnExists('produtos','tenant_id')?' WHERE p.tenant_id=:tenant':'';$params=$tenantWhere!==''?['tenant'=>$this->tenantId]:[];
+        if($this->columnExists('produtos','stock_control_by_lot')&&$this->tableExists('stock_lots')){
+            $sql="SELECT COUNT(*) products,COALESCE(SUM(CASE WHEN p.stock_control_by_lot=1 THEN COALESCE(l.balance,0) ELSE p.estoque_atual END),0) balance FROM produtos p LEFT JOIN (SELECT product_id,SUM(quantity_available) balance FROM stock_lots WHERE tenant_id=:lot_tenant AND status='ACTIVE' GROUP BY product_id) l ON l.product_id=p.id".$tenantWhere;
+            $params['lot_tenant']=$this->tenantId;
+        }else{$sql='SELECT COUNT(*) products,COALESCE(SUM(p.estoque_atual),0) balance FROM produtos p'.$tenantWhere;}
+        $statement=$this->pdo->prepare($sql);$statement->execute($params);$row=$statement->fetch(PDO::FETCH_ASSOC)?:[];return['products'=>(int)($row['products']??0),'balance'=>(float)($row['balance']??0)];
     }
 
     public function customerOptions(): array
@@ -137,11 +154,11 @@ final class DashboardRepository
 
     private function notesAnalytics(array$filters):array
     {
-        if(!$this->tableExists('fiscal_documents'))return['total'=>0,'pending'=>0,'rejected'=>0,'authorized'=>0,'other'=>0,'fiscal_total'=>0.0,'by_status'=>[],'by_day'=>[],'by_model'=>['55'=>0,'65'=>0]];
+        if(!$this->tableExists('fiscal_documents'))return['total'=>0,'pending'=>0,'rejected'=>0,'attention'=>0,'authorized'=>0,'other'=>0,'fiscal_total'=>0.0,'by_status'=>[],'by_day'=>[],'by_model'=>['55'=>0,'65'=>0]];
         [$where,$params]=$this->notesWhere($filters);$model=$this->jsonText("d.totals_json",'model');$grand=$this->jsonText("d.totals_json",'grand');
         $statement=$this->pdo->prepare("SELECT d.status,{$model} model,COUNT(*) qty,COALESCE(SUM(CASE WHEN d.status IN ('AUTHORIZED','AUTORIZADA') THEN CAST(NULLIF({$grand},'') AS DECIMAL(18,2)) ELSE 0 END),0) fiscal_total FROM fiscal_documents d LEFT JOIN fiscal_orders o ON o.id=d.source_order_id AND o.tenant_id=d.tenant_id WHERE {$where} GROUP BY d.status,{$model}");$statement->execute($params);
-        $summary=['total'=>0,'pending'=>0,'rejected'=>0,'authorized'=>0,'other'=>0,'fiscal_total'=>0.0,'by_status'=>['Autorizadas'=>0,'Pendentes'=>0,'Rejeitadas'=>0,'Outros'=>0],'by_model'=>['55'=>0,'65'=>0]];
-        foreach($statement->fetchAll(PDO::FETCH_ASSOC)as$row){$qty=(int)$row['qty'];$category=$this->noteCategory((string)$row['status']);$summary['total']+=$qty;$summary[$category]+=$qty;$summary['fiscal_total']+=(float)$row['fiscal_total'];$label=['authorized'=>'Autorizadas','pending'=>'Pendentes','rejected'=>'Rejeitadas','other'=>'Outros'][$category];$summary['by_status'][$label]+=$qty;$resolved=(string)($row['model']??'');if(isset($summary['by_model'][$resolved]))$summary['by_model'][$resolved]+=$qty;}
+        $summary=['total'=>0,'pending'=>0,'rejected'=>0,'attention'=>0,'authorized'=>0,'other'=>0,'fiscal_total'=>0.0,'by_status'=>['Autorizadas'=>0,'Pendentes'=>0,'Rejeitadas'=>0,'Outros'=>0],'by_model'=>['55'=>0,'65'=>0]];
+        foreach($statement->fetchAll(PDO::FETCH_ASSOC)as$row){$qty=(int)$row['qty'];$category=$this->noteCategory((string)$row['status']);$summary['total']+=$qty;$summary[$category]+=$qty;if(in_array($category,['pending','rejected'],true))$summary['attention']+=$qty;$summary['fiscal_total']+=(float)$row['fiscal_total'];$label=['authorized'=>'Autorizadas','pending'=>'Pendentes','rejected'=>'Rejeitadas','other'=>'Outros'][$category];$summary['by_status'][$label]+=$qty;$resolved=(string)($row['model']??'');if(isset($summary['by_model'][$resolved]))$summary['by_model'][$resolved]+=$qty;}
         $day=$this->pdo->prepare("SELECT DATE(d.created_at) note_date,COUNT(*) qty FROM fiscal_documents d LEFT JOIN fiscal_orders o ON o.id=d.source_order_id AND o.tenant_id=d.tenant_id WHERE {$where} GROUP BY DATE(d.created_at) ORDER BY note_date");$day->execute($params);$indexed=[];foreach($day->fetchAll(PDO::FETCH_ASSOC)as$row)$indexed[(string)$row['note_date']]=(int)$row['qty'];
         $from=new DateTimeImmutable((string)$filters['from'],$this->timezone);$to=new DateTimeImmutable((string)$filters['to'],$this->timezone);$summary['by_day']=[];for($date=$from;$date<=$to;$date=$date->modify('+1 day')){$key=$date->format('Y-m-d');$summary['by_day'][]=['date'=>$key,'label'=>$date->format('d/m'),'count'=>$indexed[$key]??0];}
         return$summary;

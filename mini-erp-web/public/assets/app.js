@@ -76,6 +76,45 @@ document.addEventListener('DOMContentLoaded', function () {
     // Smooth appearance
     document.body.classList.add('animated-ui');
 
+    // Mantém Financeiro como o penúltimo item, imediatamente antes de Configurações.
+    const financialMenuItem = document.querySelector('#sidebar-drawer .cat-toggle [data-feather="dollar-sign"]')?.closest('.drawer-cat');
+    const settingsMenuItem = document.querySelector('#sidebar-drawer .cat-toggle [data-feather="settings"]')?.closest('.drawer-cat');
+    if (financialMenuItem && settingsMenuItem) settingsMenuItem.parentNode.insertBefore(financialMenuItem, settingsMenuItem);
+
+    // Cada rota interna do menu recebe um ícone próprio antes de inicializar o Feather.
+    const drawerIconRoutes = [
+        ['page=dashboard&tab=overview','layout'],['page=dashboard&tab=sales','trending-up'],
+        ['page=dashboard&tab=financial','dollar-sign'],
+        ['financial_tab=receivable','arrow-down-circle'],['financial_tab=payable','arrow-up-circle'],
+        ['tab=entrada','log-in'],['tab=saida','log-out'],['tab=emitidos','check-square'],
+        ['page=fiscal_notes','file-text'],['tab=pessoas','user'],['tab=produtos','shopping-bag'],
+        ['tab=cfops','hash'],['stock_tab=products','box'],['stock_tab=lots','layers'],
+        ['stock_tab=movements','repeat'],['stock_tab=locations','map-pin'],['tab=empresa','briefcase'],
+        ['tab=usuarios','users'],['#fiscal','percent'],['#nfce','credit-card'],
+        ['#mdfe','truck'],['#contador','clipboard']
+    ];
+    document.querySelectorAll('#sidebar-drawer .drawer-submenu a').forEach(function (link) {
+        if (link.querySelector('[data-feather]')) return;
+        const linkLabel = link.textContent?.trim();
+        if (linkLabel) {
+            link.title = linkLabel;
+            link.setAttribute('aria-label', linkLabel);
+        }
+        const href = link.getAttribute('href') || '';
+        const match = drawerIconRoutes.find(([part]) => href.includes(part));
+        const icon = document.createElement('i');
+        icon.dataset.feather = match ? match[1] : 'chevron-right';
+        icon.setAttribute('aria-hidden', 'true');
+        link.prepend(icon);
+    });
+    document.querySelectorAll('#sidebar-drawer > .drawer-inner > .drawer-cats > .drawer-cat > .cat-link, #sidebar-drawer > .drawer-inner > .drawer-cats > .drawer-cat > .cat-toggle').forEach(function (item) {
+        const label = item.querySelector('span')?.textContent?.trim();
+        if (label) {
+            item.title = label;
+            item.setAttribute('aria-label', label);
+        }
+    });
+
     // initialize feather icons if present
     try { if (window.feather) window.feather.replace(); } catch (e) { /* ignore */ }
 
@@ -136,6 +175,7 @@ document.addEventListener('DOMContentLoaded', function () {
             drawer.setAttribute('aria-hidden', 'false');
             hamburger.setAttribute('aria-expanded', 'true');
             document.body.classList.add('mobile-menu-open');
+            openAllSubmenus();
             closeButton?.focus({ preventScroll: true });
         }
         function closeDrawer() {
@@ -158,25 +198,50 @@ document.addEventListener('DOMContentLoaded', function () {
             if (isMobile()) closeDrawer();
         }));
 
-        // category toggles inside drawer (work on both mobile and desktop)
+        const expandControl = drawer.querySelector('[data-drawer-expand]');
+        let expandedByHover = false;
+
+        // Categorias em acordeão: apenas a opção clicada permanece aberta.
         drawer.querySelectorAll('.cat-toggle').forEach(btn => {
             btn.addEventListener('click', function () {
+                const wasHoverExpansion = expandedByHover;
+                expandedByHover = false;
+                drawer.classList.remove('hover-expanded');
+                expandControl?.setAttribute('aria-expanded', 'false');
                 const ul = btn.nextElementSibling;
                 if (!ul) return;
-                const open = ul.classList.toggle('open');
-                btn.setAttribute('aria-expanded', String(open));
+                const shouldOpen = wasHoverExpansion || !ul.classList.contains('open');
+                drawer.querySelectorAll('.drawer-submenu').forEach(other => {
+                    other.classList.remove('open');
+                    const otherButton = other.previousElementSibling;
+                    if (otherButton?.classList.contains('cat-toggle')) otherButton.setAttribute('aria-expanded', 'false');
+                });
+                ul.classList.toggle('open', shouldOpen);
+                btn.setAttribute('aria-expanded', String(shouldOpen));
+            });
+
+            btn.closest('.drawer-cat')?.addEventListener('mouseenter', function () {
+                if (isMobile()) return;
+                const ul = btn.nextElementSibling;
+                if (!ul || expandControl?.getAttribute('aria-expanded') === 'true') return;
+                expandedByHover = true;
+                drawer.querySelectorAll('.drawer-submenu').forEach(other => {
+                    const isCurrent = other === ul;
+                    other.classList.toggle('open', isCurrent);
+                    const otherButton = other.previousElementSibling;
+                    if (otherButton?.classList.contains('cat-toggle')) otherButton.setAttribute('aria-expanded', String(isCurrent));
+                });
             });
         });
 
-        // helpers to open/close all submenus with animation
         function openAllSubmenus() {
             drawer.querySelectorAll('.drawer-submenu').forEach((ul) => {
                 ul.classList.add('open');
-                Array.from(ul.querySelectorAll('li')).forEach((li, idx) => li.style.transitionDelay = (idx * 40) + 'ms');
                 const btn = ul.previousElementSibling;
-                if (btn && btn.classList.contains('cat-toggle')) btn.setAttribute('aria-expanded', 'true');
+                if (btn?.classList.contains('cat-toggle')) btn.setAttribute('aria-expanded', 'true');
             });
         }
+
         function closeAllSubmenus() {
             drawer.querySelectorAll('.drawer-submenu').forEach((ul) => {
                 ul.classList.remove('open');
@@ -189,68 +254,31 @@ document.addEventListener('DOMContentLoaded', function () {
         document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isMobile()) closeDrawer(); });
 
         // Desktop click-to-expand and hover-to-expand: manage explicit vs hover expansion
-        let explicitExpanded = false;
-        let collapseTimer = null;
-        let hoverReady = false;
-
-        setTimeout(function () {
-            hoverReady = true;
-        }, 350);
-
-        function scheduleDrawerCollapse() {
-            clearTimeout(collapseTimer);
-            collapseTimer = setTimeout(function () {
-                if (isMobile() || explicitExpanded) return;
-                drawer.classList.remove('expanded');
-                drawer.classList.add('compact');
-                closeAllSubmenus();
-            }, 600);
-        }
-
-        drawer.addEventListener('click', function (e) {
+        expandControl?.addEventListener('click', function () {
             if (isMobile()) return;
-            // only toggle when clicking empty area (not links, toggles, or submenu items)
-            if (e.target.closest('a') || e.target.closest('.cat-toggle') || e.target.closest('.drawer-submenu')) return;
-            clearTimeout(collapseTimer);
-            const expanding = !drawer.classList.contains('expanded');
-            explicitExpanded = expanding;
-            if (expanding) {
-                drawer.classList.add('expanded');
-                drawer.classList.remove('compact');
-                openAllSubmenus();
-            } else {
-                drawer.classList.remove('expanded');
-                drawer.classList.add('compact');
-                closeAllSubmenus();
-            }
+            expandedByHover = false;
+            const expanding = expandControl.getAttribute('aria-expanded') !== 'true';
+            drawer.classList.toggle('expanded', expanding);
+            drawer.classList.toggle('compact', !expanding);
+            expandControl.setAttribute('aria-expanded', String(expanding));
+            expandControl.setAttribute('aria-label', expanding ? 'Recolher opções' : 'Mostrar todas as opções');
+            expandControl.title = expanding ? 'Recolher opções' : 'Mostrar todas as opções';
+            if (expanding) openAllSubmenus(); else closeAllSubmenus();
         });
 
         // hover behavior: when user moves mouse over drawer on desktop, expand temporarily
-        drawer.addEventListener('mouseenter', function () {
-            if (isMobile() || !hoverReady) return;
-            clearTimeout(collapseTimer);
-            if (explicitExpanded) return; // do nothing if user explicitly expanded
-            drawer.classList.add('expanded');
-            drawer.classList.remove('compact');
-            openAllSubmenus();
-        });
-        drawer.addEventListener('mouseleave', function () {
-            if (isMobile() || !hoverReady) return;
-            if (explicitExpanded) return; // keep expanded if explicitly toggled
-            // Não colapsar automaticamente ao remover o mouse.
-            // A ação de colapso ocorrerá apenas quando o usuário clicar fora do drawer.
-        });
 
         // Fecha (colapsa) o drawer apenas quando o usuário clicar fora dele.
         document.addEventListener('click', function (e) {
             if (isMobile()) return;
-            if (!drawer.classList.contains('expanded')) return;
             // Se o clique foi dentro do drawer ou no botão hamburger, ignora.
             if (e.target.closest('#sidebar-drawer') || e.target.closest('#hamburger')) return;
 
-            explicitExpanded = false;
+            expandedByHover = false;
             drawer.classList.remove('expanded');
+            drawer.classList.remove('hover-expanded');
             drawer.classList.add('compact');
+            expandControl?.setAttribute('aria-expanded', 'false');
             closeAllSubmenus();
         });
 
@@ -260,6 +288,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 drawer.classList.remove('open');
                 drawer.classList.remove('compact');
                 drawer.classList.remove('expanded');
+                drawer.classList.remove('hover-expanded');
+                expandControl?.setAttribute('aria-expanded', 'false');
                 backdrop.classList.remove('open');
                 drawer.setAttribute('aria-hidden', 'true');
                 hamburger.setAttribute('aria-expanded', 'false');
@@ -270,6 +300,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 // desktop: compact by default, visible, but without forcing the mobile "open" state
                 drawer.classList.add('compact');
                 drawer.classList.remove('expanded');
+                drawer.classList.remove('hover-expanded');
+                expandControl?.setAttribute('aria-expanded', 'false');
                 drawer.classList.remove('open');
                 drawer.setAttribute('aria-hidden', 'false');
                 backdrop.classList.remove('open');
@@ -435,11 +467,15 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!saved && defaultTaxes && Object.prototype.hasOwnProperty.call(defaultTaxes, source)) return defaultTaxes[source];
             return fallback;
         };
+        const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]));
+        const productLots = (window.STOCK_LOTS || []).filter(lot => String(lot.product_id) === String(prod.id));
+        const selectedLot = String(saved?.stock_lot_id || '');
+        const lotField = prod.stock_control_by_lot ? `<label class="order-lot-field">Lote<select name="itens[${idx}][stock_lot_id]" required><option value="">Selecione o lote</option>${productLots.map(lot=>`<option value="${Number(lot.id)}" ${String(lot.id)===selectedLot?'selected':''}>${escapeHtml(lot.lot_code)} · ${escapeHtml(lot.location_name)} · saldo ${escapeHtml(lot.quantity_available)}${lot.expires_at?' · val. '+escapeHtml(lot.expires_at):''}</option>`).join('')}</select></label>` : '';
 
         row.innerHTML = `
             <td>${idx+1}</td>
             <td>${prod.codigo}</td>
-            <td>${prod.nome}</td>
+            <td>${prod.nome}${lotField}</td>
             <td>${prod.un || 'UN'}</td>
             <td><input type="number" name="itens[${idx}][quantidade]" value="${saved ? saved.quantity : 1}" min="0.0001" step="0.0001" class="item-qty"></td>
             <td><input type="number" step="0.0001" name="itens[${idx}][preco_unitario]" value="${saved ? saved.unit_price : prod.preco}" class="item-preco"></td>
@@ -646,7 +682,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Inicializa autocomplete quando houver campo de busca
     createAutocomplete();
-    (window.ORDER_ITEMS || []).forEach(saved => addItem({id:saved.id,codigo:saved.codigo,nome:saved.nome,un:saved.unidade,preco:saved.unit_price}, saved));
+    (window.ORDER_ITEMS || []).forEach(saved => addItem({id:saved.id,codigo:saved.codigo,nome:saved.nome,un:saved.unidade,preco:saved.unit_price,stock_control_by_lot:Boolean(Number(saved.stock_control_by_lot||0))}, saved));
 
     function computeTotals() {
         if (!tbody) return;
@@ -779,24 +815,27 @@ document.addEventListener('DOMContentLoaded', function () {
         let payload;
         try { payload = JSON.parse(canvas.dataset.chart || '{}'); } catch (_) { return; }
         const isMoney = payload.type === 'money';
+        const isDonut = payload.type === 'donut';
         const context = canvas.getContext('2d');
         const gradient = context.createLinearGradient(0, 0, 0, 360);
         gradient.addColorStop(0, isMoney ? '#3b82f6' : '#22c98a');
         gradient.addColorStop(1, isMoney ? '#2457d6' : '#12845d');
 
+        const palette = ['#cf4967','#2f83bd','#d1a53a','#22a06b','#775dd0','#e07a3f'];
         new window.Chart(context, {
-            type: 'bar',
+            type: isDonut ? 'doughnut' : 'bar',
             data: {
                 labels: payload.labels || [],
                 datasets: [{
                     label: payload.label || '',
                     data: payload.values || [],
-                    backgroundColor: gradient,
-                    borderColor: isMoney ? '#2457d6' : '#12845d',
-                    borderWidth: 1,
+                    backgroundColor: isDonut ? palette : gradient,
+                    borderColor: isDonut ? rootStyle.getPropertyValue('--panel').trim() || '#fff' : (isMoney ? '#2457d6' : '#12845d'),
+                    borderWidth: isDonut ? 3 : 1,
                     borderRadius: 7,
                     borderSkipped: false,
-                    maxBarThickness: 42
+                    maxBarThickness: 42,
+                    hoverOffset: isDonut ? 6 : 0
                 }]
             },
             options: {
@@ -805,18 +844,19 @@ document.addEventListener('DOMContentLoaded', function () {
                 animation: reduced ? false : { duration: 380, easing: 'easeOutQuart' },
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
-                    legend: { display: false },
+                    legend: { display: isDonut, position: 'top', labels: { color: textColor, usePointStyle: true, boxWidth: 8, padding: 14 } },
                     tooltip: {
                         displayColors: false,
                         padding: 12,
                         callbacks: {
                             title: items => items[0]?.label || '',
-                            label: item => isMoney ? `Faturamento: ${money.format(item.raw || 0)}` : `Quantidade: ${item.raw || 0}`,
+                            label: item => isMoney ? `Faturamento: ${money.format(item.raw || 0)}` : `${item.label || 'Quantidade'}: ${item.raw || 0}`,
                             afterLabel: item => isMoney && Array.isArray(payload.counts) ? `Vendas: ${payload.counts[item.dataIndex] || 0}` : ''
                         }
                     }
                 },
-                scales: {
+                cutout: isDonut ? '58%' : undefined,
+                scales: isDonut ? {} : {
                     x: { grid: { display: false }, ticks: { color: mutedColor, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
                     y: {
                         beginAtZero: true,

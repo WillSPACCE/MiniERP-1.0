@@ -12,6 +12,8 @@ require_once __DIR__ . '/../src/Repositories/MariaDbTaxRuleRepository.php';
 require_once __DIR__ . '/../src/Repositories/FiscalOperationRepository.php';
 require_once __DIR__ . '/../src/Repositories/IssuedOrdersRepository.php';
 require_once __DIR__ . '/../src/Repositories/DashboardRepository.php';
+require_once __DIR__ . '/../src/Repositories/StockRepository.php';
+require_once __DIR__ . '/../src/Repositories/FinancialRepository.php';
 require_once __DIR__ . '/../src/Repositories/MasterDataDirectoryRepository.php';
 require_once __DIR__ . '/../src/Repositories/FiscalDocumentEventRepository.php';
 require_once __DIR__ . '/../src/Services/CreateInternalFiscalDocumentService.php';
@@ -162,6 +164,8 @@ if ($restoredFormState !== null) {
 $_SESSION['erp_client_csrf'] ??= bin2hex(random_bytes(32));
 $_SESSION['erp_establishment_csrf'] ??= bin2hex(random_bytes(32));
 $_SESSION['erp_fiscal_csrf'] ??= bin2hex(random_bytes(32));
+$_SESSION['erp_stock_csrf'] ??= bin2hex(random_bytes(32));
+$_SESSION['erp_financial_csrf'] ??= bin2hex(random_bytes(32));
 setcookie('erp_fiscal_csrf', (string)$_SESSION['erp_fiscal_csrf'], ['expires'=>0,'path'=>'/','secure'=>!empty($_SERVER['HTTPS']),'httponly'=>true,'samesite'=>'Strict']);
 $erpEstablishmentService = null; $erpEstablishment = null; $erpEstablishmentSchemaAvailable = false;
 if ($secureErpRuntime !== null) {
@@ -309,6 +313,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 ) {
                     throw new RuntimeException('ORDER_SAVE_READBACK_FAILED');
                 }
+                if (($savedOrder['operation_type'] ?? '') === 'ENTRY') {
+                    (new \MiniErp\Repositories\StockRepository(Database::getConnection(), $tenantId))->receiveEntryOrder($orderId, $savedOrder['items'], $userId);
+                    $savedOrder = $operationRepo->orderWithTransport($orderId);
+                }
+                (new \MiniErp\Repositories\FinancialRepository(Database::getConnection(), $tenantId))->syncOrder($savedOrder, $userId);
                 if ($_POST['action'] === 'save_fiscal_mirror') {
                     $mirrorId = $operationRepo->createMirror($orderId, $userId);
                     $flash['success'] = "Pedido #{$orderId} e Espelho #{$mirrorId} gravados sem emissão fiscal.";
@@ -623,7 +632,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 break;
 
             case 'approve_usuario':
-                $repo->approveUsuario((int) ($_POST['id'] ?? 0));
+                $repo->approveUsuario((int) ($_POST['id'] ?? 0), (string)($_POST['approval_role']??'user'));
                 $flash['success'] = 'Usuário aprovado e ativado.';
                 break;
 
@@ -748,9 +757,11 @@ $dashboardRepository = new \MiniErp\Repositories\DashboardRepository(
     new DateTimeZone('America/Sao_Paulo')
 );
 $dashboard = $dashboardRepository->analytics($dashboardFilters);
+$dashboard['financial']=(new \MiniErp\Repositories\FinancialRepository(Database::getConnection(),(int)($_SESSION['erp_tenant_id']??$_SESSION['tenant_id']??0)))->summary();
 $dashboardCustomers=$dashboardRepository->customerOptions();
 $clientes = $repo->listClientes((string) ($_GET['q'] ?? ''));
 $produtos = $repo->listProdutos();
+$stockSelectableLots=[];if($page==='pedidos'){try{$stockSelectableLots=(new \MiniErp\Repositories\StockRepository(Database::getConnection(),(int)($_SESSION['erp_tenant_id']??$_SESSION['tenant_id']??0)))->selectableLots();}catch(Throwable$stockLotsError){error_log('ORDER_STOCK_LOTS_LOAD_FAILED type='.get_class($stockLotsError));}}
 $vendas = $repo->listVendas();
 $cfops = $repo->listCfops();
 $fornecedores = $repo->listFornecedores();
@@ -856,14 +867,14 @@ if (is_dir($imagesDir)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
-    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png?v=round1">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png?v=round1">
+    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png?v=round1">
     <title>Mini ERP</title>
     <!-- Favicons -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/Favicon-v2/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/images/Favicon-v2/apple-touch-icon.png?v=round1">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png?v=round1">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/images/Favicon-v2/favicon-16x16.png?v=round1">
     <meta name="theme-color" content="#1e88e5">
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('style.css')) ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('issued-orders.css')) ?>">
@@ -901,9 +912,22 @@ if (is_dir($imagesDir)) {
                     <div><strong>Menu principal</strong><span>Navegue pelo Mini ERP</span></div>
                     <button type="button" class="drawer-close" data-drawer-close aria-label="Fechar menu">×</button>
                 </div>
+                <button type="button" class="drawer-expand-control" data-drawer-expand aria-expanded="false" title="Abrir menu completo" aria-label="Abrir menu completo"><i data-feather="menu"></i><span>Menu completo</span></button>
                 <ul class="drawer-cats">
                     <li class="drawer-cat">
-                        <a href="?page=dashboard" class="cat-link <?= $page === 'dashboard' ? 'active' : '' ?>"><i data-feather="home"></i><span>Dashboard</span></a>
+                        <button class="cat-toggle <?= $page === 'financeiro' ? 'active' : '' ?>" aria-expanded="<?= $page === 'financeiro' ? 'true' : 'false' ?>"><i data-feather="dollar-sign"></i><span>Financeiro</span></button>
+                        <ul class="drawer-submenu <?= $page === 'financeiro' ? 'open' : '' ?>">
+                            <li><a class="<?= $page === 'financeiro' && ($_GET['financial_tab'] ?? 'receivable') === 'receivable' ? 'active' : '' ?>" href="?page=financeiro&amp;financial_tab=receivable">Contas a receber</a></li>
+                            <li><a class="<?= $page === 'financeiro' && ($_GET['financial_tab'] ?? '') === 'payable' ? 'active' : '' ?>" href="?page=financeiro&amp;financial_tab=payable">Contas a pagar</a></li>
+                        </ul>
+                    </li>
+                    <li class="drawer-cat">
+                        <button class="cat-toggle <?= $page === 'dashboard' ? 'active' : '' ?>" aria-expanded="<?= $page === 'dashboard' ? 'true' : 'false' ?>"><i data-feather="home"></i><span>Dashboard</span></button>
+                        <ul class="drawer-submenu <?= $page === 'dashboard' ? 'open' : '' ?>">
+                            <li><a class="<?= $page === 'dashboard' && ($_GET['tab'] ?? 'overview') === 'overview' ? 'active' : '' ?>" href="?page=dashboard&amp;tab=overview">Visão geral</a></li>
+                            <li><a class="<?= $page === 'dashboard' && ($_GET['tab'] ?? '') === 'sales' ? 'active' : '' ?>" href="?page=dashboard&amp;tab=sales">Vendas</a></li>
+                            <li><a class="<?= $page === 'dashboard' && ($_GET['tab'] ?? '') === 'financial' ? 'active' : '' ?>" href="?page=dashboard&amp;tab=financial">Financeiro</a></li>
+                        </ul>
                     </li>
 
                     <li class="drawer-cat">
@@ -921,6 +945,17 @@ if (is_dir($imagesDir)) {
                             <li><a href="?page=cadastro&tab=pessoas">Pessoas</a></li>
                             <li><a href="?page=cadastro&tab=produtos">Produtos</a></li>
                             <li><a href="?page=cadastro&tab=cfops">CFOPs</a></li>
+                        </ul>
+                    </li>
+
+                    <li class="drawer-section-label" aria-hidden="true">Operação de estoque</li>
+                    <li class="drawer-cat">
+                        <button class="cat-toggle <?= $page === 'estoque' ? 'active' : '' ?>" aria-expanded="<?= $page === 'estoque' ? 'true' : 'false' ?>"><i data-feather="package"></i><span>Estoque</span></button>
+                        <ul class="drawer-submenu <?= $page === 'estoque' ? 'open' : '' ?>">
+                            <li><a class="<?= $page === 'estoque' && ($_GET['stock_tab'] ?? 'products') === 'products' ? 'active' : '' ?>" href="?page=estoque&amp;stock_tab=products">Produtos e saldos</a></li>
+                            <li><a class="<?= $page === 'estoque' && ($_GET['stock_tab'] ?? '') === 'lots' ? 'active' : '' ?>" href="?page=estoque&amp;stock_tab=lots">Lotes</a></li>
+                            <li><a class="<?= $page === 'estoque' && ($_GET['stock_tab'] ?? '') === 'movements' ? 'active' : '' ?>" href="?page=estoque&amp;stock_tab=movements">Movimentações</a></li>
+                            <li><a class="<?= $page === 'estoque' && ($_GET['stock_tab'] ?? '') === 'locations' ? 'active' : '' ?>" href="?page=estoque&amp;stock_tab=locations">Locais</a></li>
                         </ul>
                     </li>
 
@@ -966,6 +1001,7 @@ if (is_dir($imagesDir)) {
                                 <a href="?page=cadastro&tab=cfops">CFOPs</a>
                             </div>
                         </div>
+                        <div class="menu-item-wrapper"><a class="menu-item <?= navClass('estoque', $page) ?>" href="?page=estoque">ESTOQUE</a></div>
                         <div class="menu-item-wrapper">
                             <a class="menu-item <?= navClass('configuracao', $page) ?>" href="?page=configuracao">CONFIGURAÇÃO</a>
                             <div class="submenu">
@@ -1175,7 +1211,7 @@ if (is_dir($imagesDir)) {
                                                 <td class="table-actions" data-label="Ações">
                                                     <a class="issued-action" href="?page=pedidos&amp;tab=<?= $editTab ?>&amp;order_id=<?= (int)$v['id'] ?>" title="Editar pedido" aria-label="Editar pedido">✎ <span>Editar</span></a>
                                                     <button class="issued-action" type="button" data-issued-action="preview" data-order-id="<?= (int)$v['id'] ?>" title="Gerar <?= $v['fiscal_model']==='65'?'Prévia DANFC-e':'Prévia DANFE' ?>" aria-label="Gerar <?= $v['fiscal_model']==='65'?'Prévia DANFC-e':'Prévia DANFE' ?>">▤ <span><?= $v['fiscal_model']==='65'?'Prévia DANFC-e':'Prévia DANFE' ?></span></button>
-                                                    <button class="issued-action primary" type="button" data-issued-action="issue" data-order-id="<?= (int)$v['id'] ?>" data-idempotency="<?= hash('sha256',session_id().'|issue|'.(int)$v['id'].'|'.bin2hex(random_bytes(8))) ?>" title="Emitir / Transmitir" aria-label="Emitir ou transmitir pedido">➤ <span>Emitir</span></button>
+                                                    <button class="issued-action primary" type="button" data-issued-action="issue" data-order-id="<?= (int)$v['id'] ?>" data-idempotency="<?= hash('sha256',session_id().'|issue|'.(int)$v['id'].'|'.bin2hex(random_bytes(8))) ?>" title="Gerar, assinar e baixar XML local" aria-label="Assinar e baixar XML local">✍ <span>Assinar XML</span></button>
                                                     <details class="issued-more"><summary title="Mais ações" aria-label="Mais ações">⋮</summary><div><button type="button" data-issued-action="clone" data-order-id="<?= (int)$v['id'] ?>" title="Clonar pedido">⧉ Clonar</button><button type="button" class="danger" data-issued-action="delete" data-order-id="<?= (int)$v['id'] ?>" data-order-label="#<?= (int)$v['id'] ?> — <?= htmlspecialchars($v['person_name']) ?> — <?= htmlspecialchars(date('d/m/Y',strtotime($v['operation_date']))) ?> — <?= htmlspecialchars(formatCurrency((float)$v['grand_total'])) ?>" title="Excluir pedido"<?= $locked?' disabled':'' ?>>🗑 Excluir</button></div></details>
                                                 </td>
                                             </tr>
@@ -1516,7 +1552,8 @@ if (is_dir($imagesDir)) {
                             </script>
 
                             <script>
-                                window.PRODUCTS = <?= json_encode(array_map(function($p){ return ['product_id'=>(int)$p['id'],'id'=>(int)$p['id'],'nome'=>$p['nome'],'codigo'=>$p['codigo'],'preco'=>(float)$p['preco'],'un'=>$p['unidade'] ?? 'UN','estoque'=>(float)($p['estoque_atual'] ?? 0),'status'=>$p['status'] ?? 'ativo']; }, $produtos)) ?>;
+                                window.PRODUCTS = <?= json_encode(array_map(function($p){ return ['product_id'=>(int)$p['id'],'id'=>(int)$p['id'],'nome'=>$p['nome'],'codigo'=>$p['codigo'],'preco'=>(float)$p['preco'],'un'=>$p['unidade'] ?? 'UN','estoque'=>(float)($p['estoque_atual'] ?? 0),'status'=>$p['status'] ?? 'ativo','stock_control_by_lot'=>!empty($p['stock_control_by_lot'])]; }, $produtos)) ?>;
+                                window.STOCK_LOTS = <?=json_encode($stockSelectableLots,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>;
                                 window.CLIENTS = <?= json_encode($clientes) ?>;
                                 window.ORDER_ITEMS = <?= json_encode($editingOrder['items'] ?? []) ?>;
                                 // carregar impostos por produto do banco
@@ -1544,6 +1581,15 @@ if (is_dir($imagesDir)) {
                     </div>
                     </div>
                     <?php
+                    break;
+
+                case 'estoque':
+                    include __DIR__.'/includes/stock_page.php';
+                    break;
+
+                case 'financeiro':
+                    if(empty($erpAccessPolicy['can_use_financial'])){echo '<section class="panel"><h2>Financeiro bloqueado</h2><p>O acesso a este módulo foi desabilitado pelo Painel da Plataforma.</p></section>';break;}
+                    include __DIR__.'/includes/financial_page.php';
                     break;
 
                 case 'cadastro':
@@ -2538,6 +2584,7 @@ if (is_dir($imagesDir)) {
                                             <td data-label="Perfil"><?= htmlspecialchars($u['cargo'] ?: $u['role']) ?></td>
                                             <td data-label="Status"><span class="status-badge <?= ($u['status'] ?? '') === 'ativo' ? 'success' : '' ?>"><?= htmlspecialchars($u['status'] ?? 'inativo') ?></span></td>
                                             <td data-label="Ações" class="user-row-actions">
+                                                <?php if (($u['status']??'') === 'pendente'): ?><form method="POST" class="user-approval-form"><input type="hidden" name="action" value="approve_usuario"><input type="hidden" name="id" value="<?= (int)$u['id'] ?>"><select name="approval_role" aria-label="Perfil a liberar"><option value="user">Usuário</option><option value="admin">Administrador</option></select><button class="btn small" type="submit">Ativar acesso</button></form><?php endif; ?>
                                                 <button class="btn small" type="button" data-user-edit="<?= (int)$u['id'] ?>">Editar</button>
                                                 <form method="POST"><input type="hidden" name="action" value="delete_usuario"><input type="hidden" name="id" value="<?= (int)$u['id'] ?>"><button class="btn ghost small" type="submit" onclick="return confirm('Remover usuário?')">Remover</button></form>
                                             </td>
@@ -3059,19 +3106,20 @@ if (is_dir($imagesDir)) {
                     break;
 
                 default:
-                    $dashboardTab=in_array((string)($_GET['tab']??'overview'),['overview','sales','notes','customers','stock'],true)?(string)($_GET['tab']??'overview'):'overview';
+                    $dashboardTab=in_array((string)($_GET['tab']??'overview'),['overview','sales','notes','customers','stock','financial'],true)?(string)($_GET['tab']??'overview'):'overview';
                     $dashboardQuery=static function(array$replace=[])use($dashboardFilters):string{$query=['page'=>'dashboard','tab'=>'overview',...$dashboardFilters,...$replace];foreach($query as$key=>$value)if($value===''||$value===0)unset($query[$key]);return'?'.http_build_query($query);};
                     $renderMoneyChart=static function(array$days,string$label):string{$payload=['type'=>'money','label'=>$label,'labels'=>array_column($days,'label'),'values'=>array_map(static fn(array$day):float=>(float)$day['revenue'],$days),'counts'=>array_map(static fn(array$day):int=>(int)$day['count'],$days)];return'<div class="dashboard-chart-frame"><canvas class="dashboard-chart" data-chart="'.htmlspecialchars(json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),ENT_QUOTES,'UTF-8').'" role="img" aria-label="'.htmlspecialchars($label,ENT_QUOTES,'UTF-8').'"></canvas></div>';};
                     $renderCountChart=static function(array$days,string$key,string$label):string{$payload=['type'=>'count','label'=>$label,'labels'=>array_column($days,'label'),'values'=>array_map(static fn(array$day):int=>(int)$day[$key],$days)];return'<div class="dashboard-chart-frame"><canvas class="dashboard-chart" data-chart="'.htmlspecialchars(json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),ENT_QUOTES,'UTF-8').'" role="img" aria-label="'.htmlspecialchars($label,ENT_QUOTES,'UTF-8').'"></canvas></div>';};
+                    $renderDonutChart=static function(array$rows,string$label):string{$rows=array_slice($rows,0,6);$payload=['type'=>'donut','label'=>$label,'labels'=>array_map(static fn(array$row):string=>(string)$row['nome'],$rows),'values'=>array_map(static fn(array$row):float=>(float)$row['quantity'],$rows)];return'<div class="dashboard-chart-frame dashboard-chart-frame--donut"><canvas class="dashboard-chart" data-chart="'.htmlspecialchars(json_encode($payload,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),ENT_QUOTES,'UTF-8').'" role="img" aria-label="'.htmlspecialchars($label,ENT_QUOTES,'UTF-8').'"></canvas></div>';};
                     $preset=static fn(int$days):string=>$dashboardQuery(['from'=>$dashboardToday->modify('-'.($days-1).' days')->format('Y-m-d'),'to'=>$dashboardToday->format('Y-m-d'),'tab'=>$dashboardTab]);
                     ?>
                     <section class="page-header dashboard-heading"><div><p class="eyebrow">Inteligência operacional</p><h2>Dashboard analítico</h2><p>Vendas, notas, clientes e estoque com fontes separadas e filtros por período.</p></div></section>
                     <form class="dashboard-filters panel" method="get"><input type="hidden" name="page" value="dashboard"><input type="hidden" name="tab" value="<?=htmlspecialchars($dashboardTab)?>"><label>Data inicial<input type="date" name="from" value="<?=htmlspecialchars($dashboardFilters['from'])?>"></label><label>Data final<input type="date" name="to" value="<?=htmlspecialchars($dashboardFilters['to'])?>"></label><label>Cliente<select name="customer_id"><option value="0">Todos os clientes</option><?php foreach($dashboardCustomers as$customer):?><option value="<?=(int)$customer['id']?>"<?=$dashboardFilters['customer_id']===(int)$customer['id']?' selected':''?>><?=htmlspecialchars($customer['nome'])?></option><?php endforeach?></select></label><label>Modelo<select name="model"><option value="">Todos</option><option value="55"<?=$dashboardFilters['model']==='55'?' selected':''?>>55 — NF-e</option><option value="65"<?=$dashboardFilters['model']==='65'?' selected':''?>>65 — NFC-e</option></select></label><?php if($dashboardTab==='notes'):?><label>Status<select name="status"><option value="">Todos</option><?php foreach(['pending'=>'Pendentes','rejected'=>'Rejeitadas','authorized'=>'Autorizadas','preparing'=>'Em preparação']as$value=>$label):?><option value="<?=$value?>"<?=$dashboardFilters['status']===$value?' selected':''?>><?=$label?></option><?php endforeach?></select></label><?php endif?><div class="dashboard-filter-actions"><button class="btn" type="submit">Aplicar filtros</button><a class="btn secondary" href="?page=dashboard&amp;tab=<?=urlencode($dashboardTab)?>">Limpar filtros</a></div><div class="dashboard-presets"><span>Atalhos:</span><a href="<?=$preset(1)?>">Hoje</a><a href="<?=$preset(7)?>">7 dias</a><a href="<?=$preset(30)?>">30 dias</a><a href="<?=$dashboardQuery(['from'=>$dashboardToday->modify('first day of this month')->format('Y-m-d'),'to'=>$dashboardToday->format('Y-m-d'),'tab'=>$dashboardTab])?>">Este mês</a></div></form>
-                    <nav class="dashboard-tabs" aria-label="Seções do Dashboard"><?php foreach(['overview'=>'Visão geral','sales'=>'Vendas','notes'=>'Notas','customers'=>'Clientes','stock'=>'Estoque']as$value=>$label):?><a class="<?=$dashboardTab===$value?'active':''?>" href="<?=$dashboardQuery(['tab'=>$value])?>" aria-current="<?=$dashboardTab===$value?'page':'false'?>"><?=$label?></a><?php endforeach?></nav>
+                    <nav class="dashboard-tabs" aria-label="Seções do Dashboard"><?php foreach(['overview'=>'Visão geral','sales'=>'Vendas','notes'=>'Notas','customers'=>'Clientes','stock'=>'Estoque','financial'=>'Financeiro']as$value=>$label):?><a class="<?=$dashboardTab===$value?'active':''?>" href="<?=$dashboardQuery(['tab'=>$value])?>" aria-current="<?=$dashboardTab===$value?'page':'false'?>"><?=$label?></a><?php endforeach?></nav>
 
                     <?php if($dashboardTab==='overview'):$overviewDays=array_slice($dashboard['sales_by_day'],-7);?>
-                        <div class="stats-grid analytics-stats"><div class="stat-card"><span>Clientes</span><strong><?=(int)$dashboard['clientes']?></strong></div><div class="stat-card"><span>Produtos</span><strong><?=(int)$dashboard['produtos']?></strong></div><div class="stat-card"><span>Vendas</span><strong><?=(int)$dashboard['vendas']?></strong></div><div class="stat-card warning"><span>Faturamento</span><strong><?=formatCurrency((float)$dashboard['faturamento'])?></strong></div><div class="stat-card"><span>Ticket médio</span><strong><?=formatCurrency((float)$dashboard['ticket_average'])?></strong></div></div>
-                        <div class="panel sales-panel"><div class="sales-header"><div><p class="eyebrow">Faturamento comercial</p><h3>Últimos 7 dias do período</h3></div><span class="sales-total-label">Total: <?=formatCurrency((float)array_sum(array_column($overviewDays,'revenue')))?></span></div><?=$renderMoneyChart($overviewDays,'Faturamento dos últimos sete dias')?></div>
+                        <div class="stats-grid analytics-stats dashboard-kpis"><a class="stat-card dashboard-kpi dashboard-kpi--green" href="?page=cadastro&amp;tab=pessoas"><span>Clientes cadastrados</span><strong><?=(int)$dashboard['clientes']?></strong><small>Acessar cadastro ›</small></a><a class="stat-card dashboard-kpi dashboard-kpi--cyan" href="?page=pedidos&amp;tab=emitidos"><span>Pedidos emitidos</span><strong><?=(int)$dashboard['issued_orders']?></strong><small>Acessar pedidos ›</small></a><a class="stat-card dashboard-kpi dashboard-kpi--blue" href="?page=fiscal_notes"><span>Notas na Central</span><strong><?=(int)$dashboard['notes']['total']?></strong><small>Acessar Central de Notas ›</small></a><a class="stat-card dashboard-kpi dashboard-kpi--red" href="?page=fiscal_notes&amp;status=ATTENTION"><span>Pendências fiscais</span><strong><?=(int)$dashboard['notes']['attention']?></strong><small>Ver pendentes e rejeitadas ›</small></a><a class="stat-card dashboard-kpi dashboard-kpi--amber" href="?page=estoque"><span>Saldo em estoque</span><strong><?=htmlspecialchars(number_format((float)$dashboard['stock_balance'],2,',','.'))?></strong><small><?=(int)$dashboard['estoque_baixo']?> produto(s) em nível baixo ›</small></a><a class="stat-card dashboard-kpi dashboard-kpi--blue" href="?page=financeiro"><span>Saldo financeiro projetado</span><strong><?=formatCurrency($dashboard['financial']['receivable']-$dashboard['financial']['payable'])?></strong><small>A receber <?=formatCurrency($dashboard['financial']['receivable'])?> ›</small></a></div>
+                        <div class="analytics-grid dashboard-overview-charts"><div class="panel sales-panel"><div class="sales-header"><div><p class="eyebrow">Pedidos</p><h3>Faturamento dos últimos 7 dias</h3></div><span class="sales-total-label">Total: <?=formatCurrency((float)array_sum(array_column($overviewDays,'revenue')))?></span></div><?=$renderMoneyChart($overviewDays,'Faturamento dos últimos sete dias')?></div><div class="panel sales-panel"><div class="sales-header"><div><p class="eyebrow">Produtos</p><h3>Mais vendidos no período</h3></div></div><?=$dashboard['top_products']?$renderDonutChart($dashboard['top_products'],'Produtos mais vendidos'):'<div class="dashboard-empty-chart">Ainda não existem vendas no período.</div>'?></div></div>
                         <div class="panel"><h3>Alertas de estoque</h3><p>Produtos ativos abaixo do estoque mínimo: <?=(int)$dashboard['estoque_baixo']?></p><?php foreach($dashboard['low_stock_products']as$product):?><div class="stock-row"><span><?=htmlspecialchars($product['nome'])?></span><strong><?=htmlspecialchars((string)$product['estoque_atual'])?> <?=htmlspecialchars((string)($product['unidade']?:'UN'))?> · mínimo <?=htmlspecialchars((string)$product['minimum_stock'])?></strong></div><?php endforeach?></div>
                     <?php elseif($dashboardTab==='sales'):?>
                         <div class="stats-grid"><div class="stat-card warning"><span>Total vendido</span><strong><?=formatCurrency((float)$dashboard['faturamento'])?></strong></div><div class="stat-card"><span>Quantidade de pedidos</span><strong><?=(int)$dashboard['vendas']?></strong></div><div class="stat-card"><span>Ticket médio</span><strong><?=formatCurrency((float)$dashboard['ticket_average'])?></strong></div><div class="stat-card"><span>Maior venda</span><strong><?=formatCurrency((float)$dashboard['largest_sale'])?></strong></div></div>
@@ -3082,6 +3130,8 @@ if (is_dir($imagesDir)) {
                         <div class="analytics-grid"><div class="panel analytics-status"><h3>Notas por status</h3><?php $statusMax=max(1,...array_values($notes['by_status']));foreach($notes['by_status']as$label=>$value):?><div class="analytics-progress" title="<?=htmlspecialchars($label)?>: <?=(int)$value?>"><span><?=htmlspecialchars($label)?></span><div><i data-width="<?=number_format($value/$statusMax*100,2,'.','')?>"></i></div><strong><?=(int)$value?></strong></div><?php endforeach?></div><div class="panel sales-panel"><h3>Notas por dia</h3><?=$renderCountChart($notes['by_day'],'count','Notas por dia')?></div></div><div class="panel"><h3>Divisão por modelo</h3><div class="model-split"><span>NF-e 55 <strong><?=(int)$notes['by_model']['55']?></strong></span><span>NFC-e 65 <strong><?=(int)$notes['by_model']['65']?></strong></span></div></div>
                     <?php elseif($dashboardTab==='customers'):$best=$dashboard['best_customer'];?>
                         <div class="stats-grid"><div class="stat-card stat-card--wide"><span>Maior cliente do período</span><strong><?=htmlspecialchars((string)($best['customer_name']??'Sem vendas'))?></strong><small><?=formatCurrency((float)($best['revenue']??0))?> em <?=(int)($best['orders_count']??0)?> pedido(s)</small></div></div><div class="panel analytics-table"><h3>Top 10 clientes por faturamento</h3><table><thead><tr><th>Cliente</th><th>Pedidos</th><th>Itens</th><th>Faturamento</th><th>Ticket médio</th></tr></thead><tbody><?php foreach($dashboard['top_customers']as$row):?><tr><td><?=htmlspecialchars($row['customer_name'])?></td><td><?=(int)$row['orders_count']?></td><td><?=htmlspecialchars((string)$row['items_count'])?></td><td><?=formatCurrency((float)$row['revenue'])?></td><td><?=formatCurrency((float)$row['average_ticket'])?></td></tr><?php endforeach?></tbody></table></div>
+                    <?php elseif($dashboardTab==='financial'):$finance=$dashboard['financial'];?>
+                        <div class="stats-grid"><div class="stat-card"><span>Contas a receber</span><strong><?=formatCurrency($finance['receivable'])?></strong></div><div class="stat-card"><span>Contas a pagar</span><strong><?=formatCurrency($finance['payable'])?></strong></div><div class="stat-card warning"><span>Em atraso</span><strong><?=formatCurrency($finance['overdue'])?></strong></div><div class="stat-card"><span>Saldo projetado</span><strong><?=formatCurrency($finance['receivable']-$finance['payable'])?></strong></div></div><div class="panel"><h3>Resumo financeiro</h3><p>Os valores consideram títulos em aberto e parcialmente pagos. Vendas a prazo geram contas a receber; entradas a prazo e despesas geram contas a pagar.</p><a class="btn" href="?page=financeiro">Abrir módulo Financeiro</a></div>
                     <?php else:$movement=$dashboard['stock']['movement'];?>
                         <div class="stats-grid"><div class="stat-card"><span>Estoque baixo</span><strong><?=(int)$dashboard['estoque_baixo']?></strong></div><div class="stat-card"><span>Itens vendidos no período</span><strong><?=htmlspecialchars((string)$dashboard['stock']['sold_quantity'])?></strong></div><div class="stat-card"><span>Movimentações de saída registradas</span><strong><?=$movement['available']?'Disponível':'Sem ledger'?></strong></div></div><div class="message warning"><?=htmlspecialchars($movement['note'])?> As quantidades abaixo representam itens vendidos, não baixa comprovada de estoque.</div><div class="analytics-grid"><div class="panel analytics-table"><h3>Mais vendidos</h3><table><thead><tr><th>Produto</th><th>Quantidade vendida</th><th>Faturamento</th></tr></thead><tbody><?php foreach($dashboard['top_products']as$row):?><tr><td><?=htmlspecialchars($row['nome'])?></td><td><?=htmlspecialchars((string)$row['quantity'])?> <?=htmlspecialchars((string)$row['unidade'])?></td><td><?=formatCurrency((float)$row['revenue'])?></td></tr><?php endforeach?></tbody></table></div><div class="panel analytics-table"><h3>Estoque baixo</h3><table><thead><tr><th>Produto</th><th>Atual</th><th>Mínimo</th><th>Diferença</th></tr></thead><tbody><?php foreach($dashboard['low_stock_products']as$row):?><tr><td><?=htmlspecialchars($row['nome'])?></td><td><?=htmlspecialchars((string)$row['estoque_atual'])?> <?=htmlspecialchars((string)$row['unidade'])?></td><td><?=htmlspecialchars((string)$row['minimum_stock'])?></td><td><?=htmlspecialchars((string)((float)$row['estoque_atual']-(float)$row['minimum_stock']))?></td></tr><?php endforeach?></tbody></table></div></div><div class="panel analytics-table"><h3>Últimos itens vendidos</h3><table><thead><tr><th>Data</th><th>Produto</th><th>Pedido</th><th>Cliente</th><th>Quantidade</th><th>Estoque atual</th></tr></thead><tbody><?php foreach($dashboard['last_sold_items']as$row):?><tr><td><?=htmlspecialchars(date('d/m/Y',strtotime($row['operation_date'])))?></td><td><?=htmlspecialchars($row['product_name'])?></td><td>#<?=(int)$row['order_id']?></td><td><?=htmlspecialchars($row['customer_name'])?></td><td><?=htmlspecialchars((string)$row['quantity'])?></td><td><?=htmlspecialchars((string)$row['estoque_atual'])?> <?=htmlspecialchars((string)$row['unidade'])?></td></tr><?php endforeach?></tbody></table></div>
                     <?php

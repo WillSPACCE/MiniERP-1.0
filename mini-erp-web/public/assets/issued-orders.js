@@ -36,7 +36,7 @@
       openModal(dialog); return;
     }
     if (type === 'clone' && !confirm(`Duplicar o pedido #${orderId}?`)) return;
-    if (type === 'issue' && !confirm('Preparar este pedido para emissão fiscal? Nenhum envio à SEFAZ será feito nesta etapa.')) return;
+    if (type === 'issue' && !confirm('Gerar, assinar e validar o XML localmente? O arquivo não será enviado à SEFAZ.')) return;
     const previewWindow = type === 'preview' ? window.open('', '_blank') : null;
     if (previewWindow) previewWindow.document.write('<!doctype html><meta charset="utf-8"><title>Prévia fiscal</title><p style="font:16px system-ui;padding:28px">Gerando prévia fiscal…</p>');
     action.disabled = true; action.classList.add('loading');
@@ -44,8 +44,11 @@
       const data = await request(type, orderId, type === 'issue' ? {idempotency_key: action.dataset.idempotency || ''} : {});
       toast(data.message);
       if (previewWindow && data.preview_url) previewWindow.location.href = data.preview_url;
+      if (type === 'issue' && data.xml_url) {
+        const download = document.createElement('a'); download.href = data.xml_url; download.download = ''; document.body.append(download); download.click(); download.remove();
+      }
       // A prévia abre na guia criada pelo clique; a lista operacional deve permanecer aberta.
-      if (type !== 'preview' && data.redirect) setTimeout(() => { window.location.href = data.redirect; }, 500);
+      if (type !== 'preview' && data.redirect) setTimeout(() => { window.location.href = data.redirect; }, type === 'issue' ? 1200 : 500);
     } catch (error) {
       toast(error.message, true);
       if (previewWindow) { previewWindow.document.body.innerHTML = `<p style="font:16px system-ui;padding:28px">${error.message}</p>`; }

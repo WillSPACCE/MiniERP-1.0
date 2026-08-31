@@ -1522,6 +1522,7 @@ class Repository {
                 $stmt = $this->pdo->prepare('UPDATE usuarios SET ' . implode(', ', $set) . ' WHERE id = :id');
             }
             $stmt->execute($params);
+            $this->syncTenantUserToMain((int)$data['id'], $tenantId);
             return;
         }
 
@@ -1538,6 +1539,7 @@ class Repository {
         $placeholders = array_map(fn($f) => ':' . $f, $fields);
         $stmt = $this->pdo->prepare('INSERT INTO usuarios (' . implode(', ', $fields) . ') VALUES (' . implode(', ', $placeholders) . ')');
         $stmt->execute($params);
+        $this->syncTenantUserToMain((int)$this->pdo->lastInsertId(), $tenantId);
 
         // envia e-mail de verificação (se configurado)
         try {
@@ -1607,6 +1609,7 @@ class Repository {
     public function deleteUsuario(int $id): void
     {
         $tenantId = $this->requireTenantId();
+        $local=$this->findUsuarioById($id);
         if ($this->hasColumn('usuarios', 'tenant_id')) {
             $stmt = $this->pdo->prepare('DELETE FROM usuarios WHERE id = :id AND tenant_id = :tid');
             $stmt->execute(['id' => $id, 'tid' => $tenantId]);
@@ -1614,19 +1617,37 @@ class Repository {
             $stmt = $this->pdo->prepare('DELETE FROM usuarios WHERE id = :id');
             $stmt->execute(['id' => $id]);
         }
+        if($local){$main=$this->mainConnection();$main->prepare('DELETE FROM usuarios WHERE tenant_id=:tenant AND LOWER(email)=LOWER(:email)')->execute(['tenant'=>$tenantId,'email'=>$local['email']]);}
     }
 
     // Aprova um usuário pendente (ativa conta e marca e-mail como verificado)
-    public function approveUsuario(int $id): void
+    public function approveUsuario(int $id, string $role = 'user'): void
     {
+        $role=in_array($role,['user','admin'],true)?$role:'user';
         $tenantId = $this->requireTenantId();
         if ($this->hasColumn('usuarios', 'tenant_id')) {
-            $stmt = $this->pdo->prepare('UPDATE usuarios SET status = :status, email_verified = 1 WHERE id = :id AND tenant_id = :tid');
-            $stmt->execute(['status' => 'ativo', 'id' => $id, 'tid' => $tenantId]);
+            $stmt = $this->pdo->prepare('UPDATE usuarios SET status = :status, role=:role, cargo=IF(:role="admin","admin",cargo), email_verified = 1 WHERE id = :id AND tenant_id = :tid');
+            $stmt->execute(['status' => 'ativo','role'=>$role, 'id' => $id, 'tid' => $tenantId]);
         } else {
-            $stmt = $this->pdo->prepare('UPDATE usuarios SET status = :status, email_verified = 1 WHERE id = :id');
-            $stmt->execute(['status' => 'ativo', 'id' => $id]);
+            $stmt = $this->pdo->prepare('UPDATE usuarios SET status = :status, role=:role, cargo=IF(:role="admin","admin",cargo), email_verified = 1 WHERE id = :id');
+            $stmt->execute(['status' => 'ativo','role'=>$role, 'id' => $id]);
         }
+        $this->syncTenantUserToMain($id, $tenantId);
+    }
+
+    private function mainConnection(): PDO
+    {
+        $config=require __DIR__.'/../config.php';$db=$config['db'];
+        return new PDO(sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',$db['host'],$db['port'],$db['database']),$db['username'],$db['password'],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
+    }
+
+    private function syncTenantUserToMain(int $localUserId,int $tenantId): void
+    {
+        $local=$this->findUsuarioById($localUserId);if(!$local)return;
+        $main=$this->mainConnection();$find=$main->prepare('SELECT id FROM usuarios WHERE tenant_id=:tenant AND LOWER(email)=LOWER(:email) LIMIT 1');$find->execute(['tenant'=>$tenantId,'email'=>$local['email']]);$mainId=(int)($find->fetchColumn()?:0);
+        $values=['nome'=>$local['nome'],'email'=>strtolower((string)$local['email']),'senha'=>$local['senha'],'role'=>$local['role']?:'user','avatar'=>$local['avatar']??'','status'=>$local['status']?:'inativo','verified'=>(int)($local['email_verified']??0),'permissions'=>$local['permissions']??'','cargo'=>$local['cargo']??'funcionario','tenant'=>$tenantId,'company'=>$tenantId,'pessoa'=>$local['pessoa_id']??null];
+        if($mainId>0){$values['id']=$mainId;$main->prepare('UPDATE usuarios SET nome=:nome,email=:email,senha=:senha,role=:role,avatar=:avatar,status=:status,email_verified=:verified,permissions=:permissions,cargo=:cargo,company_id=:company,pessoa_id=:pessoa WHERE id=:id AND tenant_id=:tenant')->execute($values);return;}
+        $main->prepare('INSERT INTO usuarios(nome,email,senha,role,avatar,status,email_verified,permissions,cargo,tenant_id,company_id,pessoa_id) VALUES(:nome,:email,:senha,:role,:avatar,:status,:verified,:permissions,:cargo,:tenant,:company,:pessoa)')->execute($values);
     }
 
     // Cria um token de redefinição e o persiste em password_resets

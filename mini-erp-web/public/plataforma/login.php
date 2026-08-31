@@ -62,14 +62,14 @@ $e = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Login do Control-Plane</title>
-    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png">
-    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/images/Favicon-v2/favicon-32x32.png?v=round1">
+    <link rel="apple-touch-icon" href="/assets/images/Favicon-v2/apple-touch-icon.png?v=round1">
     <link rel="stylesheet" href="/assets/platform.css">
 </head>
 <body class="login-body">
     <main class="login-shell">
         <div class="login-brand">
-            <span class="brand-mark">MR</span>
+            <img class="platform-login-logo" src="/assets/images/mini-erp-logo.png" alt="Mini ERP Web">
             <div>
                 <strong>Mini ERP</strong>
                 <small>Control-Plane</small>

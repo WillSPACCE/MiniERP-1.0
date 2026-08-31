@@ -8,7 +8,7 @@ final class MigrationCatalog
     public function __construct(private string $directory) {}
     public function all(): array
     {
-        $main=['20260814_add_company_fields.sql','20260814_add_company_municipio_regime.sql','20260814_add_tenant_id.sql','20260820_add_tenant_schema_version.sql','20260822_create_multitenant_operations.sql','20260822_create_platform_admin_auth.sql','20260829_create_platform_server_settings.sql'];
+        $main=['20260814_add_company_fields.sql','20260814_add_company_municipio_regime.sql','20260814_add_tenant_id.sql','20260820_add_tenant_schema_version.sql','20260822_create_multitenant_operations.sql','20260822_create_platform_admin_auth.sql','20260829_create_platform_server_settings.sql','20260829_create_tenant_registration_flow.sql'];
         $dependencies=[
             '20260821_close_fiscal_certificate_series_runtime.sql'=>['20260821_create_fiscal_credentials_and_series_audit.sql'],
             '20260821_create_fiscal_credentials_and_series_audit.sql'=>['20260821_create_tenant_establishments.sql'],

@@ -125,7 +125,7 @@
 .container.right-panel-active .overlay-right { transform: translateX(20%); }
 
 /* logo inside overlay */
-.overlay-logo { max-height: 86px; width: auto; display:block; margin-bottom:18px; }
+.overlay-logo { max-height: 108px; max-width:min(310px,80vw); width: auto; display:block; margin-bottom:18px; }
 .overlay-logo-link { display:inline-block; }
 
 .social-container { margin: 20px 0; }
@@ -148,7 +148,7 @@ button:focus { outline: none; }
 .login-footer { position: absolute; bottom: 18px; left: 0; width: 100%; text-align: center; background: transparent; color:#3b4c63; padding: 6px 12px; box-sizing: border-box; }
 
 .login-footer .footer-brand { display:flex; align-items:center; justify-content:center; margin:0 auto 6px; }
-.login-footer .login-footer-logo { max-height:40px; width:auto; display:block; margin:0 auto; }
+.login-footer .login-footer-logo { max-height:48px; max-width:190px; width:auto; display:block; margin:0 auto; }
 .login-footer .footer-dev { font-size:0.82rem; color: rgba(59,76,99,0.9); }
 .login-footer .dev-link{ color: var(--primary); font-weight:700; text-decoration:none; }
 .login-footer .dev-link:hover{ text-decoration:underline; }

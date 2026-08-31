@@ -31,6 +31,7 @@ analyticsAssert($data['top_customers'][0]['customer_name']==='Cliente B','Dashbo
 analyticsAssert(abs((float)$data['top_customers'][0]['revenue']-300)<0.001&&$data['best_customer']['orders_count']===1,'DashboardCustomerRevenueTest');
 analyticsAssert($data['notes']['total']===3&&abs($data['notes']['fiscal_total']-100)<0.001,'DashboardNotesSummaryTest');
 analyticsAssert($data['notes']['authorized']===1&&$data['notes']['pending']===1&&$data['notes']['rejected']===1,'DashboardNotesByStatusTest');
+analyticsAssert($data['notes']['attention']===2,'DashboardFiscalAttentionTest');
 analyticsAssert(array_sum(array_column($data['notes']['by_day'],'count'))===3,'DashboardNotesByDayTest');
 analyticsAssert($data['stock']['sold_item_lines']===3&&(float)$data['stock']['sold_quantity']===6.0&&$data['stock']['movement']['available']===false,'DashboardStockSummaryTest');
 analyticsAssert(count($data['last_sold_items'])===3,'DashboardLastStockSalesTest');
@@ -47,4 +48,4 @@ analyticsAssert($date['vendas']===1&&abs($date['faturamento']-300)<0.001&&$date[
 analyticsAssert($data['vendas']===2&&$data['notes']['total']===3&&(float)$data['stock']['sold_quantity']===6.0,'DashboardAnalyticsTenantIsolationTest');
 
 $ui=(string)file_get_contents(__DIR__.'/../public/index.php');
-foreach(['overview','sales','notes','customers','stock']as$tab)analyticsAssert(str_contains($ui,"'{$tab}'"),'DashboardTab'.ucfirst($tab).'Test');
+foreach(['overview','sales','notes','customers','stock','financial']as$tab)analyticsAssert(str_contains($ui,"'{$tab}'"),'DashboardTab'.ucfirst($tab).'Test');
