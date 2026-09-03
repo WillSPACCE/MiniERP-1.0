@@ -35,8 +35,6 @@ Abaixo estão as imagens e logos já presentes no repositório. Substitua ou adi
 `mini-erp-web/public/assets/images/` e atualize os nomes conforme necessário.
 
 <p align="center">
-  <img src="mini-erp-web/public/assets/images/logo_blue.png" alt="MiniERP Logo Azul" width="220" style="margin:8px">
-  <img src="mini-erp-web/public/assets/images/logo_white.png" alt="MiniERP Logo Branco" width="220" style="margin:8px">
   <img src="mini-erp-web/public/assets/images/logo.gif" alt="MiniERP GIF" width="220" style="margin:8px">
 </p>
 
