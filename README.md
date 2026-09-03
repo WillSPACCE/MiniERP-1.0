@@ -1,7 +1,7 @@
 <!-- Hero -->
 <p align="center">
-  <img src="mini-erp-web/public/assets/images/gif_logo.png" alt="MiniERP" width="220">
-  <p align="center">ERP web multiempresa em PHP + MariaDB — pedidos, fiscais e multi-tenant.</p>
+  <img src="mini-erp-web/public/assets/images/gif_logo.png" alt="MiniERP" width="360" style="display:block;margin:0 auto 12px">
+  <p align="center" style="font-size:1.05rem;opacity:0.9">ERP web multiempresa em PHP + MariaDB — pedidos, fiscais e multi-tenant.</p>
 
   <p align="center">
     <img alt="PHP 8.2" src="https://img.shields.io/badge/PHP-8.2-777BB4?logo=php&logoColor=white">
@@ -9,6 +9,30 @@
     <img alt="Status" src="https://img.shields.io/badge/status-em%20desenvolvimento-F59E0B">
   </p>
 </p>
+
+<!-- Futuristic showcase -->
+## Futuristic showcase ✨🚀
+
+Quer um README que passe credibilidade técnica e sensação de produto de alto nível? Aqui estão melhorias aplicadas e opções para tornar a página mais "futurista":
+
+- Hero animado: usamos `gif_logo.png` como marca animada no topo para impacto imediato.
+- Badges dinâmicos: indicadores de versão/stack e status com badges visuais.
+- Showcase animado: GIFs curtos (demos rápidas) ou Lottie embed em GitHub Pages para transições suaves.
+
+O que eu posso implementar para deixar mais profissional agora:
+
+1. Thumbnails animados das telas (GIF curto com transição) para a seção de screenshots;
+2. Versões anotadas (imagens com setas e chamadas) exportadas como GIF ou PNG de alta resolução;
+3. Publicar uma landing visual (GitHub Pages) que consome arquivos Lottie para animações vetoriais leves.
+
+Como funcionaria (opções técnicas):
+
+- GIF simples: gerar a partir das telas com ImageMagick (script automático disponível);
+- Lottie + GitHub Pages: hospedar JSON Lottie em `docs/assets/` e inserir via `<script>` numa página do Pages (não executável diretamente no README do GitHub);
+- SVG animado: usar SVGs animados (SMIL ou CSS) embutidos em `docs/` para previews interativos.
+
+Se quiser, eu gero os GIFs curtos com transições e atualizo o `README` para mostrar um carrossel (sequência de GIFs). Diga qual opção prefere: `gifs` (rápido) ou `lottie/pages` (mais profissional, requer deploy de Pages). 
+
 
 ---
 
