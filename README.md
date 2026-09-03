@@ -28,6 +28,23 @@ fluxos transacionais e prévias locais de DANFE/DANFC-e.
 - Armazenamento de XML com integridade (SHA-256) quando disponível;
 - Módulos de sincronização de catálogo (NCM/contábil) e importadores tabulares.
 
+## Funcionalidades (o que o sistema resolve)
+
+Abaixo há funcionalidades concretas do MiniERP e os problemas reais que elas resolvem para equipes de operação, fiscal e comercial.
+
+- **Multi-tenant com banco por cliente**: permite hospedar múltiplas empresas em um mesmo deploy sem risco de vazamento de dados — Resolve: necessidade de rodar ambientes separados por cliente sem custo operacional elevado.
+- **Fluxo de pedido transacional (pedido → documento fiscal interno)**: grava pedidos e cria documentos fiscais em transação única, evitando divergências entre pedidos e notas — Resolve: inconsistências que geram estorno manual ou retrabalho fiscal.
+- **Prévia de DANFE/DANFC-e sem certificado (PDF local)**: gera a prévia técnica do documento fiscal sem transmitir à SEFAZ — Resolve: validar layout, campos e impostos antes de usar certificados reais em produção.
+- **Alocador de números fiscais e controle de séries**: reserva e aloca faixas de numeração fiscal por série/empresa, evitando colisões — Resolve: riscos de numeração duplicada entre operadores e ambientes (homologação/produção).
+- **Armazenamento e verificação de XML com SHA-256**: guarda o XML fiscal e valida sua integridade — Resolve: auditar e provar que o arquivo fiscal não foi alterado após geração.
+- **Sincronização de catálogos (NCM, contábil) e importadores tabulares**: importa planilhas CSV/XLS para atualizar catálogo de produtos, NCMs e contas — Resolve: reduzir entrada manual e erros em massa ao alinhar tabelas fiscais e contábeis.
+- **Central de Notas com timeline e reprocessamento**: lista estados, eventos e permite re-tentativas controladas — Resolve: tratamento de falhas de transmissão e histórico claro para suporte fiscal.
+- **Alertas de estoque e reserva de estoque por pedido**: notifica itens em nível crítico e reserva estoque ao confirmar pedidos — Resolve: evita rupturas e overselling em lojas/marketplaces.
+- **Permissões por função e administração por tenant**: roles granulares e painel de plataforma para provisionamento de empresas — Resolve: delegação segura de responsabilidades e segregação de tarefas operacionais.
+- **Importadores e exportadores contábeis (planilhas e relatórios)**: exporta informações prontas para contabilidade e integrações — Resolve: diminuir tempo gasto em fechamento fiscal e envio de dados ao contador.
+- **APIs simples para integrações (POS, marketplaces)**: endpoints para criar pedidos e sincronizar estoque — Resolve: automação entre canais de venda e redução de lançamentos manuais.
+
+
 ## Galeria de telas e logo
 
 Abaixo estão as imagens e logos já presentes no repositório. Substitua ou adicione novos prints em
