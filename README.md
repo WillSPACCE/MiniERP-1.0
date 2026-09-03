@@ -50,37 +50,37 @@ imagens locais se estiverem disponíveis no ambiente de trabalho.
 
 A seguir estão as capturas reais (desktop, tablet e mobile) organizadas por área. Cada legenda explica brevemente o que a tela mostra.
 
-- **Painel da Plataforma (desktop)** — administração da plataforma: listagem de empresas, busca, status e ações administrativas (provisionar, acessar ERP do tenant). Ideal para administradores de plataforma e ops.
+- **Dashboard (desktop)** — visão analítica com KPIs, filtros por período, cartões de resumo (clientes, pedidos, notas, pendências) e gráficos de faturamento e produtos mais vendidos.
 
-  ![Painel da Plataforma Desktop](mini-erp-web/prints/notebook.jpg)
+  ![Dashboard Desktop](mini-erp-web/prints/notebook.jpg)
 
 - **Dashboard (desktop - alternativa)** — variação do dashboard em tela maior com gráficos e alertas de estoque.
 
   ![Dashboard Desktop 2](mini-erp-web/prints/dashboard%20desktop.jpg)
 
-- **Tela de login (desktop)** — formulário de autenticação com opção de registro e separação visual (card + painel lateral de marca).
-
-  ![Login Desktop](mini-erp-web/prints/DESKTOP.jpg)
-
 - **Dashboard (tablet)** — versão responsiva do dashboard para tablet com cartões empilhados e gráficos adaptados.
 
   ![Dashboard Tablet](mini-erp-web/prints/tablet%20dashboard.jpg)
-
-- **Painel da Plataforma (desktop)** — administração da plataforma: listagem de empresas, busca, status e ações administrativas (provisionar, acessar ERP do tenant).
-
-  ![Painel da Plataforma](mini-erp-web/prints/PAINEL%20MOBILE.jpg)
 
 - **Dashboard (mobile)** — visão compacta dos KPIs com navegação inferior, cartões empilhados e gráfico resumido para acompanhar faturamento rápido.
 
   ![Dashboard Mobile](mini-erp-web/prints/mobile%20dashboard.jpg)
 
-- **Login (mobile)** — formulário de entrada adaptado para telas pequenas, com campo de seleção da empresa e botão de ação grande para toque.
+- **Painel da Plataforma (desktop)** — administração da plataforma: listagem de empresas, busca, status e ações administrativas (provisionar, acessar ERP do tenant). Ideal para administradores de plataforma e ops.
 
-  ![Login Mobile](mini-erp-web/prints/mobile.jpg)
+  ![Painel da Plataforma Desktop](mini-erp-web/prints/notebook.jpg)
 
 - **Painel da Plataforma (mobile)** — visão mobile do painel de empresas, com botão `+ Nova empresa` e navegação inferior para demais seções administrativas.
 
   ![Painel Plataforma Mobile](mini-erp-web/prints/PAINEL%20MOBILE.jpg)
+
+- **Tela de login (desktop)** — formulário de autenticação com opção de registro e separação visual (card + painel lateral de marca).
+
+  ![Login Desktop](mini-erp-web/prints/DESKTOP.jpg)
+
+- **Login (mobile)** — formulário de entrada adaptado para telas pequenas, com campo de seleção da empresa e botão de ação grande para toque.
+
+  ![Login Mobile](mini-erp-web/prints/mobile.jpg)
 
 Se desejar, posso:
 

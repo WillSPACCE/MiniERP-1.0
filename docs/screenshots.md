@@ -4,25 +4,34 @@ Esta página reúne as capturas de tela do projeto com anotações e descriçõe
 
 ## Como usar esta página
 
-- As imagens estão organizadas por área (Dashboard, Login, Painel da Plataforma).
+- As imagens estão organizadas por área (Dashboard, Painel da Plataforma, Login).
 - Cada seção descreve: elementos principais, ações usuais, comportamentos responsivos e notas de teste.
 
 ---
 
-## Painel da Plataforma (Desktop)
+## Dashboard (Desktop)
 
-![Painel da Plataforma Desktop](../mini-erp-web/prints/notebook.jpg)
+![Dashboard Desktop](../mini-erp-web/prints/notebook.jpg)
 
 Pontos principais:
 
-- Listagem de empresas com pesquisa e filtros (status, ambiente, tenant ID): usado por administradores para gerenciar tenants.
-- Cartões/resumos de métricas administrativas (empresas ativas, pendentes, provisões).
-- Ações por empresa: editar, provisionar, acessar ERP do tenant e visualizar status do ambiente.
+- Filtro por período e cliente no topo: usado para refinar os KPIs e os gráficos.
+- Cartões KPI (clientes, pedidos, notas, pendências, saldo em estoque): atalhos rápidos para as áreas relacionadas.
+- Gráficos (faturamento, mais vendidos): carregados assincronamente; configurar cache para performance.
+- Ações: exportar, filtrar e abrir prévias de DANFE.
 
 Testes recomendados:
 
-- Buscar por empresa e verificar paginação/contadores.
-- Testar ações administrativas (provisionar, acessar ERP) em um tenant de teste.
+- Alterar período e verificar atualização de KPIs.
+- Abrir prévia DANFE e validar geração do PDF em nova guia.
+
+---
+
+## Dashboard (Desktop — alternativa)
+
+![Dashboard Desktop 2](../mini-erp-web/prints/dashboard%20desktop.jpg)
+
+Variação do layout com foco em gráficos e alertas de estoque.
 
 ---
 
@@ -49,6 +58,33 @@ Usabilidade:
 
 ---
 
+## Painel da Plataforma (Desktop)
+
+![Painel Plataforma Desktop](../mini-erp-web/prints/PAINEL%20MOBILE.jpg)
+
+Descrição:
+
+- Página de administração de empresas: busca, filtros, status, ações (provisionar, acessar).
+- Indicadores e lista paginada.
+
+Testes recomendados:
+
+- Buscar por empresa e verificar paginação/contadores.
+- Testar ações administrativas (provisionar, acessar ERP) em um tenant de teste.
+
+---
+
+## Painel da Plataforma (Mobile)
+
+![Painel Plataforma Mobile](../mini-erp-web/prints/PAINEL%20MOBILE.jpg)
+
+Notas:
+
+- Elementos reordenados verticalmente e navegação inferior ativa.
+- Botão `+ Nova empresa` fixo no topo para fácil acesso.
+
+---
+
 ## Login (Desktop)
 
 ![Login Desktop](../mini-erp-web/prints/DESKTOP.jpg)
@@ -72,28 +108,6 @@ Notas de usabilidade:
 
 - Campo de seleção de empresa na parte superior do card.
 - Botão grande para ação primária, otimizado para toque.
-
----
-
-## Painel da Plataforma (Desktop)
-
-![Painel Plataforma Desktop](../mini-erp-web/prints/PAINEL%20MOBILE.jpg)
-
-Descrição:
-
-- Página de administração de empresas: busca, filtros, status, ações (provisionar, acessar).
-- Indicadores e lista paginada.
-
----
-
-## Painel da Plataforma (Mobile)
-
-![Painel Plataforma Mobile](../mini-erp-web/prints/PAINEL%20MOBILE.jpg)
-
-Notas:
-
-- Elementos reordenados verticalmente e navegação inferior ativa.
-- Botão `+ Nova empresa` fixo no topo para fácil acesso.
 
 ---
 
