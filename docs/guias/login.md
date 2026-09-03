@@ -4,11 +4,11 @@ Capturas da tela de login em versões desktop e mobile. Mostra o card de autenti
 
 ## Desktop
 
-![Login Desktop](../../mini-erp-web/prints/DESKTOP.jpg)
+![Login Desktop](../../mini-erp-web/public/assets/images/screenshots/login_desktop.jpg)
 
 ## Mobile
 
-![Login Mobile](../../mini-erp-web/prints/mobile.jpg)
+![Login Mobile](../../mini-erp-web/public/assets/images/screenshots/login_mobile.jpg)
 
 Notas rápidas:
 

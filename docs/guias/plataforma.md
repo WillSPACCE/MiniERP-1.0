@@ -4,11 +4,11 @@ Capturas do painel administrativo da plataforma (admin), com listagem de empresa
 
 ## Desktop
 
-![Painel da Plataforma Desktop](../../mini-erp-web/prints/notebook.jpg)
+![Painel da Plataforma Desktop](../../mini-erp-web/public/assets/images/screenshots/notebook.jpg)
 
 ## Mobile
 
-![Painel da Plataforma Mobile](../../mini-erp-web/prints/PAINEL%20MOBILE.jpg)
+![Painel da Plataforma Mobile](../../mini-erp-web/public/assets/images/screenshots/painel_mobile.jpg)
 
 Observações:
 

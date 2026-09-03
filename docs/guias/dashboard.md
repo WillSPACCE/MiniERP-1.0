@@ -4,19 +4,19 @@ Imagens (desktop / tablet / mobile) que mostram a visão analítica do sistema, 
 
 ## Desktop
 
-![Dashboard Desktop](../../mini-erp-web/prints/notebook.jpg)
+	![Dashboard Desktop](../../mini-erp-web/public/assets/images/screenshots/dashboard_desktop.jpg)
 
 ## Desktop (alternativa)
 
-![Dashboard Desktop 2](../../mini-erp-web/prints/dashboard%20desktop.jpg)
+	![Dashboard Desktop 2](../../mini-erp-web/public/assets/images/screenshots/dashboard_desktop.jpg)
 
 ## Tablet
 
-![Dashboard Tablet](../../mini-erp-web/prints/tablet%20dashboard.jpg)
+	![Dashboard Tablet](../../mini-erp-web/public/assets/images/screenshots/tablet_dashboard.jpg)
 
 ## Mobile
 
-![Dashboard Mobile](../../mini-erp-web/prints/mobile%20dashboard.jpg)
+	![Dashboard Mobile](../../mini-erp-web/public/assets/images/screenshots/dashboard_mobile.jpg)
 
 Legenda rápida:
 
