@@ -1,6 +1,6 @@
 <!-- Hero -->
 <p align="center">
-  <img src="mini-erp-web/public/assets/images/LOGO.png" alt="MiniERP" width="220">
+  <img src="mini-erp-web/public/assets/images/gif_logo.png" alt="MiniERP" width="220">
   <p align="center">ERP web multiempresa em PHP + MariaDB — pedidos, fiscais e multi-tenant.</p>
 
   <p align="center">
