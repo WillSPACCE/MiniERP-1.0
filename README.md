@@ -1,6 +1,6 @@
 <!-- Hero -->
 <p align="center">
-  <img src="mini-erp-web/public/assets/images/logo.gif" alt="MiniERP GIF" width="220">
+  <img src="mini-erp-web/public/assets/images/mini-erp-logo.png" alt="MiniERP" width="220">
   <h1 align="center">MiniERP 1.0</h1>
   <p align="center">ERP web multiempresa em PHP + MariaDB — pedidos, fiscais e multi-tenant.</p>
 
@@ -35,7 +35,10 @@ Abaixo estão as imagens e logos já presentes no repositório. Substitua ou adi
 `mini-erp-web/public/assets/images/` e atualize os nomes conforme necessário.
 
 <p align="center">
-  <img src="mini-erp-web/public/assets/images/logo.gif" alt="MiniERP GIF" width="220" style="margin:8px">
+  <img src="mini-erp-web/public/assets/images/mini-erp-logo.png" alt="MiniERP Logo" width="220" style="margin:8px">
+  <img src="mini-erp-web/public/assets/images/logo_login.png" alt="Login Logo" width="220" style="margin:8px">
+  <img src="mini-erp-web/public/assets/images/LOGO.png" alt="LOGO" width="220" style="margin:8px">
+  <img src="mini-erp-web/public/assets/images/gif_logo.png" alt="GIF Logo" width="220" style="margin:8px">
 </p>
 
 Se quiser, posso gerar thumbnails e adicionar imagens de cada tela (Dashboard, Pedidos,
@@ -84,7 +87,45 @@ Se desejar, posso:
 
 - gerar thumbnails otimizados e adicioná-los ao diretório `mini-erp-web/public/assets/images`;
 - criar uma subpágina de documentação em `docs/screenshots.md` com imagens maiores e anotações por elemento (setas/legendas).
+Se desejar, posso:
 
+- gerar thumbnails otimizados e adicioná-los ao diretório `mini-erp-web/public/assets/images`;
+- criar uma subpágina de documentação em `docs/screenshots.md` com imagens maiores e anotações por elemento (setas/legendas).
+
+---
+
+## Compatibilidade e suporte
+
+O MiniERP foi pensado para uso em desktops, tablets e dispositivos móveis. Recomendamos as seguintes plataformas para melhor compatibilidade:
+
+- Navegadores desktop: Chrome (últimas 2 versões), Edge (Chromium), Firefox, Safari (macOS).
+- Navegadores mobile: Chrome Android, Safari iOS (versões recentes).
+- Recomendado: tela mínima de 360x640 para mobile, 768x1024 para tablet, 1280x720 para desktop.
+
+Notas de compatibilidade:
+
+- Funcionalidades de PDF/preview dependem de bibliotecas do servidor e do navegador para abrir novas guias; em dispositivos móveis o PDF pode abrir no visualizador nativo.
+- Integração fiscal (transmissão) requer configuração de certificado A1 e ambiente SEFAZ — não é executada nas prévias locais.
+
+## Usabilidade e acessibilidade (UX)
+
+Principais considerações de UX:
+
+- Navegação: menu lateral em desktop e barra inferior em mobile para troca rápida entre seções (Dashboard, Pedidos, Notas, Cadastros).
+- Acessibilidade: foco visível em controles, labels nos campos de formulário e estruturas semânticas para melhoria em leitores de tela.
+- Touch targets: botões principais têm tamanhos adequados para toque (>=44px) nas views mobile.
+- Performance: as páginas usam carregamento assíncrono de gráficos; em bases grandes ative paginação e filtros para reduzir payload.
+
+Recomendações para testes de usabilidade:
+
+- Testar em Chrome Mobile (emulador) e em um dispositivo físico iOS para validar comportamento de PDF e teclado.
+- Testar fluxo completo de pedido → prévia → gerar XML em um tenant de teste antes de habilitar transmissão.
+
+---
+
+## Documentação visual (anotações por tela)
+
+Detalhes mais ricos e anotações por elemento estão em [docs/screenshots.md](docs/screenshots.md). Lá há imagens maiores e explicações ponto a ponto (filtros, cards KPI, ações disponíves, comportamento responsivo).
 
 ## Quickstart (local)
 
