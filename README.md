@@ -51,11 +51,12 @@ A seguir estão as capturas reais (desktop, tablet e mobile) organizadas por ár
 
 - **Dashboard (desktop)** — visão analítica com KPIs, filtros por período, cartões de resumo (clientes, pedidos, notas, pendências) e gráficos de faturamento e produtos mais vendidos.
 
-  ![Dashboard Desktop](mini-erp-web/prints/notebook.jpg)
+  ![Dashboard Desktop](mini-erp-web/prints/dashboard%20desktop.jpg)
 
-- **Dashboard (desktop - alternativa)** — variação do dashboard em tela maior com gráficos e alertas de estoque.
 
-  ![Dashboard Desktop 2](mini-erp-web/prints/dashboard%20desktop.jpg)
+- **Painel da Plataforma (desktop)** — administração da plataforma: listagem de empresas, busca, status e ações administrativas (provisionar, acessar ERP do tenant). Ideal para administradores de plataforma e ops.
+
+  ![Painel da Plataforma Desktop](mini-erp-web/prints/notebook.jpg)
 
 - **Dashboard (tablet)** — versão responsiva do dashboard para tablet com cartões empilhados e gráficos adaptados.
 
@@ -65,9 +66,7 @@ A seguir estão as capturas reais (desktop, tablet e mobile) organizadas por ár
 
   ![Dashboard Mobile](mini-erp-web/prints/mobile%20dashboard.jpg)
 
-- **Painel da Plataforma (desktop)** — administração da plataforma: listagem de empresas, busca, status e ações administrativas (provisionar, acessar ERP do tenant). Ideal para administradores de plataforma e ops.
-
-  ![Painel da Plataforma Desktop](mini-erp-web/prints/notebook.jpg)
+<!-- removed duplicate Painel da Plataforma (desktop) which is shown above -->
 
 - **Painel da Plataforma (mobile)** — visão mobile do painel de empresas, com botão `+ Nova empresa` e navegação inferior para demais seções administrativas.
 

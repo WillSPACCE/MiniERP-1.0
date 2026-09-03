@@ -11,7 +11,7 @@ Esta página reúne as capturas de tela do projeto com anotações e descriçõe
 
 ## Dashboard (Desktop)
 
-![Dashboard Desktop](../mini-erp-web/prints/notebook.jpg)
+![Dashboard Desktop](../mini-erp-web/prints/dashboard%20desktop.jpg)
 
 Pontos principais:
 
@@ -60,7 +60,7 @@ Usabilidade:
 
 ## Painel da Plataforma (Desktop)
 
-![Painel Plataforma Desktop](../mini-erp-web/prints/PAINEL%20MOBILE.jpg)
+![Painel Plataforma Desktop](../mini-erp-web/prints/notebook.jpg)
 
 Descrição:
 
