@@ -29,11 +29,21 @@ fluxos transacionais e prévias locais de DANFE/DANFC-e.
 - Armazenamento de XML com integridade (SHA-256) quando disponível;
 - Módulos de sincronização de catálogo (NCM/contábil) e importadores tabulares.
 
-## Demo / Prints
+## Galeria de telas e logo
 
-> Substitua `mini-erp-web/public/assets/images/screenshot.png` pelo seu print real.
+Abaixo estão as imagens e logos já presentes no repositório. Substitua ou adicione novos prints em
+`mini-erp-web/public/assets/images/` e atualize os nomes conforme necessário.
 
-![Screenshot do MiniERP](mini-erp-web/public/assets/images/screenshot.png)
+<p align="center">
+  <img src="mini-erp-web/public/assets/images/mini-erp-logo.png" alt="MiniERP Logo" width="220" style="margin:8px">
+  <img src="mini-erp-web/public/assets/images/logo_login.png" alt="Login Logo" width="220" style="margin:8px">
+  <img src="mini-erp-web/public/assets/images/LOGO.png" alt="LOGO" width="220" style="margin:8px">
+  <img src="mini-erp-web/public/assets/images/gif_logo.png" alt="GIF Logo" width="220" style="margin:8px">
+</p>
+
+Se quiser, posso gerar thumbnails e adicionar imagens de cada tela (Dashboard, Pedidos,
+Central de Notas, Cadastro de Produtos). Para isso, envie os prints ou autorize-me a capturar
+imagens locais se estiverem disponíveis no ambiente de trabalho.
 
 ---
 
