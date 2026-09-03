@@ -35,6 +35,17 @@ final readonly class FiscalArtifactStorage
         return ['storage_reference' => $relative, 'sha256' => hash_file('sha256', $target), 'size' => filesize($target), 'status' => 'XSD_VALID_OFFLINE'];
     }
 
+    public function storeAuthorizedXml(int $tenantId, int $establishmentId, int $documentId, string $xml): array
+    {
+        if (!str_contains($xml, '<nfeProc') || !str_contains($xml, '<protNFe')) throw new RuntimeException('SEFAZ_AUTHORIZED_XML_INVALID');
+        $relative = "tenant-{$tenantId}/establishment-{$establishmentId}/document-{$documentId}/authorized/nfe-proc.xml";
+        $target = rtrim($this->root, '/\\') . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relative);
+        $directory = dirname($target);
+        if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) throw new RuntimeException('Não foi possível criar storage fiscal autorizado.');
+        if (file_put_contents($target, $xml, LOCK_EX) === false) throw new RuntimeException('Não foi possível armazenar XML autorizado.');
+        return ['storage_reference'=>$relative,'sha256'=>hash_file('sha256',$target),'size'=>filesize($target),'status'=>'AUTHORIZED'];
+    }
+
     public function read(string $reference): string
     {
         $path = $this->resolve($reference);

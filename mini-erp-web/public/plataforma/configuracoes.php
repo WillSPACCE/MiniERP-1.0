@@ -12,16 +12,18 @@ $canEdit = in_array($role, ['SUPER_ADMIN','DATABASE_ADMIN'], true);
 $repo = new PlatformServerSettingsRepository($pdo);
 $_SESSION['platform_server_settings_csrf'] ??= bin2hex(random_bytes(32));
 $success=''; $error='';
+$activeTab=in_array((string)($_GET['tab']??$_POST['settings_section']??'connections'),['connections','sefaz'],true)?(string)($_GET['tab']??$_POST['settings_section']??'connections'):'connections';
 if (($_SERVER['REQUEST_METHOD']??'GET') === 'POST') {
     try {
         if (!$canEdit) throw new DomainException('Seu perfil possui acesso somente para consulta.');
         if (!hash_equals((string)$_SESSION['platform_server_settings_csrf'], (string)($_POST['csrf_token']??''))) throw new DomainException('Sessão expirada. Atualize a página.');
-        $repo->save($_POST, $identity->getUserId());
-        (new PlatformAdminRepository($pdo))->audit($identity->getUserId(),'SERVER_SETTINGS_UPDATED','platform','server',$_SERVER['REMOTE_ADDR']??null,['keys'=>array_keys($_POST)]);
-        $success='Configurações de infraestrutura salvas.';
+        if($activeTab==='sefaz'){$repo->saveSefazTechnical($_POST,$identity->getUserId());$auditAction='SEFAZ_TECHNICAL_SETTINGS_UPDATED';$success='Configuração do responsável técnico SEFAZ salva.';}
+        else{$repo->save($_POST,$identity->getUserId());$auditAction='SERVER_SETTINGS_UPDATED';$success='Configurações de conexões salvas.';}
+        (new PlatformAdminRepository($pdo))->audit($identity->getUserId(),$auditAction,'platform',$activeTab,$_SERVER['REMOTE_ADDR']??null,['keys'=>array_keys($_POST)]);
     } catch (Throwable $e) { $error=$e->getMessage(); }
 }
 $settings=$repo->all();
+$sefazSettings=$repo->sefazTechnical();$sefazCsrtConfigured=$sefazSettings['sefaz_csrt_env']!==''&&trim((string)getenv($sefazSettings['sefaz_csrt_env']))!=='';
 $cfg=require __DIR__.'/../../config.php'; $db=$cfg['db']??[];
 $dbOk=false; try{$pdo->query('SELECT 1');$dbOk=true;}catch(Throwable){}
 $cloudflared=$settings['cloudflared_path'];
@@ -43,14 +45,17 @@ renderPlatformStart($identity,'Configurações','Infraestrutura e servidores');
 ?>
 <div class="page-title"><div><p class="eyebrow">Control-Plane</p><h1>Configurações</h1><p class="muted">Infraestrutura, publicação externa, backups e manutenção.</p></div></div>
 <?php if($success):?><p class="message success"><?=$e($success)?></p><?php endif?><?php if($error):?><p class="message error"><?=$e($error)?></p><?php endif?>
+<nav class="platform-settings-tabs" aria-label="Guias de configurações"><a class="<?=$activeTab==='connections'?'active':''?>" href="?tab=connections">Conexões</a><a class="<?=$activeTab==='sefaz'?'active':''?>" href="?tab=sefaz">Configuração SEFAZ</a></nav>
+<?php if($activeTab==='connections'):?>
 <section class="server-health-grid" aria-label="Estado dos serviços">
  <article class="server-health-card"><span class="server-dot <?=$dbOk?'ok':'bad'?>"></span><div><small>Banco principal</small><strong><?=$dbOk?'Conectado':'Indisponível'?></strong><span><?=$e(($db['host']??'—').':'.($db['port']??'—'))?></span></div></article>
  <article class="server-health-card"><span class="server-dot <?=$cloudflaredFound?'ok':'warn'?>"></span><div><small>Cloudflare Tunnel</small><strong><?=$cloudflaredFound?'Executável configurado':'Revisar caminho'?></strong><span><?=$tokenConfigured?'Token disponível no ambiente':'Token não exposto/configurado'?></span></div></article>
  <article class="server-health-card"><span class="server-dot <?=$backupWritable?'ok':'warn'?>"></span><div><small>Backups</small><strong><?=$backupWritable?'Diretório gravável':'Diretório pendente'?></strong><span><?=$e($settings['backup_root'])?></span></div></article>
  <article class="server-health-card"><span class="server-dot ok"></span><div><small>Runtime</small><strong>PHP <?=PHP_VERSION?></strong><span><?=$e(PHP_OS_FAMILY)?> · <?=date_default_timezone_get()?></span></div></article>
 </section>
-<form method="post" class="server-settings-form">
+<form method="post" class="server-settings-form" action="?tab=connections">
  <input type="hidden" name="csrf_token" value="<?=$e($_SESSION['platform_server_settings_csrf'])?>">
+ <input type="hidden" name="settings_section" value="connections">
  <section class="panel settings-section domain-readiness"><div class="panel-header"><div><h2>Preparação do domínio futuro</h2><span class="muted">Preencha aos poucos. Nada será publicado enquanto o domínio e o túnel permanente não existirem.</span></div></div>
   <div class="domain-preview"><span>Endereço planejado</span><strong>https://<?=$e($futureHostname?:'app.seudominio.com.br')?></strong></div>
   <ol class="readiness-list">
@@ -87,4 +92,20 @@ renderPlatformStart($identity,'Configurações','Infraestrutura e servidores');
  <div class="settings-actions"><span class="muted"><?=$canEdit?'Alterações são registradas na auditoria.':'Seu perfil está em modo consulta.'?></span><button class="btn" type="submit" <?=$canEdit?'':'disabled'?>>Salvar configurações</button></div>
 </form>
 <section class="panel settings-section readonly-settings"><div class="panel-header"><div><h2>Login social das empresas</h2><span class="muted">As chaves ficam somente nas variáveis de ambiente do servidor. Depois de configuradas, os botões usam o link de login da empresa e criam uma solicitação pendente.</span></div></div><dl><?php foreach($oauthProviders as $provider=>$environmentNames):$ready=true;foreach($environmentNames as $environmentName)$ready=$ready&&trim((string)getenv($environmentName))!=='';?><div><dt><?=$e($provider)?></dt><dd><strong class="<?=$ready?'status-ok':'status-pending'?>"><?=$ready?'Configurado':'Pendente'?></strong><small><?= $e(implode(' + ', $environmentNames)) ?></small></dd></div><?php endforeach;?></dl><p class="muted">URL de retorno para cadastrar em cada provedor: <code><?= $e(($settings['public_base_url']?:'https://seu-dominio').'/oauth.php') ?></code></p></section>
+<?php else:?>
+<section class="panel settings-section"><div class="panel-header"><div><h2>Responsável técnico do MiniERP</h2><span class="muted">Estes dados formam o grupo <code>infRespTec</code> enviado no XML da NF-e em homologação.</span></div><strong class="<?=$sefazSettings['sefaz_technical_cnpj']!==''?'status-ok':'status-pending'?>"><?=$sefazSettings['sefaz_technical_cnpj']!==''?'Dados preenchidos':'Configuração pendente'?></strong></div><p class="message warning">Use exatamente o CNPJ cadastrado como responsável técnico na SEFAZ/PR. Um CNPJ diferente provoca a rejeição 974.</p></section>
+<form method="post" class="server-settings-form" action="?tab=sefaz" autocomplete="off"><input type="hidden" name="csrf_token" value="<?=$e($_SESSION['platform_server_settings_csrf'])?>"><input type="hidden" name="settings_section" value="sefaz">
+ <section class="panel settings-section"><div class="panel-header"><div><h2>Identificação técnica</h2><span class="muted">Dados da empresa responsável pelo desenvolvimento e suporte do MiniERP.</span></div></div><div class="settings-grid">
+  <label>CNPJ do responsável técnico<input name="sefaz_technical_cnpj" value="<?=$e($sefazSettings['sefaz_technical_cnpj'])?>" inputmode="numeric" maxlength="18" placeholder="00.000.000/0000-00" required><small>Deve coincidir com o cadastro da software house na SEFAZ.</small></label>
+  <label>Nome do contato<input name="sefaz_technical_contact" value="<?=$e($sefazSettings['sefaz_technical_contact'])?>" maxlength="60" required></label>
+  <label>E-mail técnico<input type="email" name="sefaz_technical_email" value="<?=$e($sefazSettings['sefaz_technical_email'])?>" required></label>
+  <label>Telefone com DDD<input name="sefaz_technical_phone" value="<?=$e($sefazSettings['sefaz_technical_phone'])?>" inputmode="tel" maxlength="16" required></label>
+ </div></section>
+ <section class="panel settings-section"><div class="panel-header"><div><h2>CSRT</h2><span class="muted">Quando exigido pela UF, o segredo permanece somente em variável de ambiente.</span></div><strong class="<?=$sefazCsrtConfigured?'status-ok':'status-pending'?>"><?=$sefazCsrtConfigured?'Segredo disponível':'Segredo não configurado'?></strong></div><div class="settings-grid">
+  <label>ID do CSRT<input name="sefaz_csrt_id" value="<?=$e($sefazSettings['sefaz_csrt_id'])?>" inputmode="numeric" maxlength="2" placeholder="01"><small>Identificador fornecido pela SEFAZ.</small></label>
+  <label>Variável de ambiente do CSRT<input name="sefaz_csrt_env" value="<?=$e($sefazSettings['sefaz_csrt_env'])?>" spellcheck="false" required><small>O segredo não é exibido nem salvo no banco.</small></label>
+ </div></section>
+ <div class="settings-actions"><span class="muted">Alterações auditadas e aplicadas às próximas NF-e geradas.</span><button class="btn" type="submit" <?=$canEdit?'':'disabled'?>>Salvar configuração SEFAZ</button></div>
+</form>
+<?php endif?>
 <?php renderPlatformEnd();

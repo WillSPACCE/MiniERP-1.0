@@ -88,6 +88,26 @@ try {
         $events = new FiscalDocumentEventRepository($pdo, $tenantId);
         if (!$events->timeline($documentId)) $events->append($documentId, 'DOCUMENT_CREATED', 'SNAPSHOT', (string)$document['status'], (string)$document['status'], 'Pedido concluído com snapshot fiscal interno; sem reserva ou transmissão.', [], $userId);
         echo json_encode(['success'=>true,'order_id'=>$orderId,'document_id'=>$documentId,'status'=>(string)$document['status'],'danfe_url'=>null,'notes_url'=>'?page=fiscal_notes&highlight='.$documentId,'error_code'=>null,'error_message'=>null],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);exit;
+    } elseif ($action === 'transmit') {
+        $documentId = filter_input(INPUT_POST, 'document_id', FILTER_VALIDATE_INT) ?: 0;
+        $operations->document($documentId);
+        $configuration = new \MiniErp\Repositories\FiscalConfigurationRepository($pdo, $tenantId);
+        $provider = new \MiniErp\Fiscal\OperationalCertificateProvider(
+            new \MiniErp\Fiscal\A1CertificateInspector(),
+            new \MiniErp\Fiscal\PrivateCertificateStorage(dirname(__DIR__) . '/storage/fiscal/certificates'),
+            new \MiniErp\Fiscal\LocalEncryptedSecretStorage(dirname(__DIR__) . '/storage/fiscal/secrets', \MiniErp\Fiscal\FiscalMasterKey::resolve(dirname(__DIR__))),
+            $configuration
+        );
+        $transmission = new \MiniErp\Services\SefazAuthorizationService(
+            $pdo, $tenantId,
+            new FiscalArtifactRepository($pdo, $tenantId),
+            new FiscalDocumentEventRepository($pdo, $tenantId),
+            new \MiniErp\Fiscal\FiscalArtifactStorage(dirname(__DIR__) . '/storage/fiscal/artifacts'),
+            $provider
+        );
+        $result = $transmission->transmitHomologation($documentId, $userId);
+        echo json_encode(['success'=>true,'authorized'=>(bool)$result['authorized'],'document_id'=>$documentId,'artifact_id'=>(int)$result['artifact_id'],'status'=>(string)$result['status'],'cstat'=>(string)($result['cstat']??''),'protocol'=>(string)($result['protocol']??''),'message'=>(string)($result['reason']??($result['authorized']?'NF-e autorizada em homologação.':'Retorno processado pela SEFAZ.')),'notes_url'=>'/?page=fiscal_notes&highlight='.$documentId], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        exit;
     } elseif ($action === 'retry') {
         $documentId = filter_input(INPUT_POST, 'document_id', FILTER_VALIDATE_INT) ?: 0;
         $document=$operations->document($documentId); // tenant/IDOR validation

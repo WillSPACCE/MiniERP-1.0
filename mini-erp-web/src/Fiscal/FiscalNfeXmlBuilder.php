@@ -16,6 +16,8 @@ final class FiscalNfeXmlBuilder
         $issuer=$dto->issuer;$recipient=$dto->recipient;$totals=$dto->totals;
         foreach (['tax_id','legal_name','state_registration','tax_regime_code','street','number','district','city_ibge_code','city_name','state','postal_code'] as $field) if (trim((string)($issuer[$field]??''))==='') throw new RuntimeException("ISSUER_FIELD_MISSING: Cadastro do emitente incompleto: {$field}.");
         $recipientName=trim((string)($recipient['nome']??$recipient['legal_name']??''));if($recipientName==='')throw new RuntimeException('CUSTOMER_NAME_MISSING: Destinatário sem nome ou razão social.');
+        $homologation=(int)$identity['environment']===2;
+        if($homologation)$recipientName='NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL';
         $recipientTaxId=preg_replace('/\D/','',(string)($recipient['cpf_cnpj']??$recipient['tax_id']??''));if(!in_array(strlen((string)$recipientTaxId),[11,14],true)&&trim((string)($recipient['foreign_id']??''))==='')throw new RuntimeException('CUSTOMER_DOCUMENT_MISSING: Destinatário sem CPF/CNPJ válido.');
         foreach([['street','logradouro','endereco'],['number','numero'],['district','bairro'],['city_ibge_code','codigo_ibge','municipio_ibge'],['city_name','municipio','cidade'],['state','uf','estado'],['postal_code','cep']]as$aliases){$present=false;foreach($aliases as$key)if(trim((string)($recipient[$key]??''))!==''){$present=true;break;}if(!$present)throw new RuntimeException('CUSTOMER_ADDRESS_MISSING: Destinatário sem endereço completo.');}
         $processVersion = trim((string) ($identity['process_version'] ?? 'MiniERP-1.0'));
@@ -27,12 +29,13 @@ final class FiscalNfeXmlBuilder
         $make->tagEmit((object)['CNPJ'=>$issuer['tax_id'],'CPF'=>null,'xNome'=>$issuer['legal_name'],'xFant'=>$issuer['trade_name']??null,'IE'=>$issuer['state_registration'],'IEST'=>$issuer['st_registration']??null,'IM'=>$issuer['municipal_registration']??null,'CNAE'=>$issuer['cnae']??null,'CRT'=>$issuer['tax_regime_code']]);
         $make->tagenderEmit($this->address($issuer));
         $taxId=strtoupper(preg_replace('/[^A-Z0-9]/i','',(string)($recipient['cpf_cnpj']??$recipient['tax_id']??''))??'');
-        $make->tagdest((object)['CNPJ'=>strlen($taxId)===14?$taxId:null,'CPF'=>strlen($taxId)===11?$taxId:null,'idEstrangeiro'=>$recipient['foreign_id']??null,'xNome'=>$recipient['nome']??$recipient['legal_name']??'','indIEDest'=>$recipient['state_registration_indicator']??9,'IE'=>$recipient['inscricao_estadual']??null,'ISUF'=>$recipient['isuf']??null,'IM'=>$recipient['municipal_registration']??null,'email'=>$recipient['email']??null]);
+        $make->tagdest((object)['CNPJ'=>strlen($taxId)===14?$taxId:null,'CPF'=>strlen($taxId)===11?$taxId:null,'idEstrangeiro'=>$recipient['foreign_id']??null,'xNome'=>$recipientName,'indIEDest'=>$recipient['state_registration_indicator']??9,'IE'=>$recipient['inscricao_estadual']??null,'ISUF'=>$recipient['isuf']??null,'IM'=>$recipient['municipal_registration']??null,'email'=>$recipient['email']??null]);
         $make->tagenderDest($this->address($recipient));
         $sum='0.00';$itemNumber=0;
         foreach($dto->items as $row){$itemNumber++;$p=$row['product'];$tax=$row['tax'];$v=$row['values'];$cfop=(string)($tax['cfop']??'');if(!preg_match('/^\d{4}$/',$cfop))throw new RuntimeException("CFOP_NOT_RESOLVED: CFOP fiscal ainda não resolvido para o item {$itemNumber}.");if(!preg_match('/^\d{8}$/',(string)($p['ncm']??'')))throw new RuntimeException("PRODUCT_NCM_MISSING: NCM inválido no item {$itemNumber}.");foreach(['codigo','nome','unidade','taxable_unit']as$field)if(trim((string)($p[$field]??''))==='')throw new RuntimeException("PRODUCT_FIELD_MISSING: {$field} ausente no item {$itemNumber}.");
             $q=(string)($v['quantity_commercial']??'0');$unit=(string)($v['unit_value_commercial']??'0');$prod=(string)($v['gross_total']??bcmul($q,$unit,2));$sum=bcadd($sum,(string)($v['net_total']??$prod),2);
-            $prodObj = ['item'=>$itemNumber,'cProd'=>$p['codigo']??(string)$itemNumber,'cEAN'=>$p['gtin']??'SEM GTIN','cBarra'=>null,'xProd'=>$p['nome']??'','NCM'=>$p['ncm']??'','cBenef'=>$p['tax_benefit_code']??null,'tpCredPresIBSZFM'=>null,'EXTIPI'=>$p['ex_tipi']??null,'CFOP'=>$cfop,'uCom'=>$p['unidade']??'UN','qCom'=>$q,'vUnCom'=>$unit,'vProd'=>$prod,'cEANTrib'=>$p['taxable_gtin']??'SEM GTIN','uTrib'=>$p['taxable_unit']??$p['unidade']??'UN','qTrib'=>$v['quantity_taxable']??$q,'vUnTrib'=>$v['unit_value_taxable']??$unit,'indTot'=>1,'CEST'=>$p['cest']??null];
+            $productName=$homologation&&$itemNumber===1?'NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL':($p['nome']??'');
+            $prodObj = ['item'=>$itemNumber,'cProd'=>$p['codigo']??(string)$itemNumber,'cEAN'=>$p['gtin']??'SEM GTIN','cBarra'=>null,'xProd'=>$productName,'NCM'=>$p['ncm']??'','cBenef'=>$p['tax_benefit_code']??null,'tpCredPresIBSZFM'=>null,'EXTIPI'=>$p['ex_tipi']??null,'CFOP'=>$cfop,'uCom'=>$p['unidade']??'UN','qCom'=>$q,'vUnCom'=>$unit,'vProd'=>$prod,'cEANTrib'=>$p['taxable_gtin']??'SEM GTIN','uTrib'=>$p['taxable_unit']??$p['unidade']??'UN','qTrib'=>$v['quantity_taxable']??$q,'vUnTrib'=>$v['unit_value_taxable']??$unit,'indTot'=>1,'CEST'=>$p['cest']??null];
             $ivFrete = $this->normalizeZeroAmountNullable($v['freight_amount'] ?? 0);
             $ivSeg = $this->normalizeZeroAmountNullable($v['insurance_amount'] ?? 0);
             $ivDesc = $this->normalizeZeroAmountNullable($v['discount_amount'] ?? 0);
@@ -100,9 +103,37 @@ final class FiscalNfeXmlBuilder
         $make->tagpag((object)['vTroco'=>$dto->payment['change']??null]);
         $method=(string)($dto->payment['method']??'');if($method==='')throw new RuntimeException('Forma de pagamento ausente no snapshot.');$make->tagdetPag((object)['indPag'=>0,'tPag'=>$method,'xPag'=>null,'vPag'=>$dto->payment['amount']??$totals['grand']]);
         if(!empty($totals['notes']))$make->taginfAdic((object)['infAdFisco'=>null,'infCpl'=>$totals['notes']]);
+        $technical=is_array($identity['technical_responsible']??null)?$identity['technical_responsible']:[];
+        if($homologation&&$technical!==[]){
+            $technicalCnpj=preg_replace('/\D/','',(string)($technical['cnpj']??''));
+            $technicalPhone=preg_replace('/\D/','',(string)($technical['phone']??''));
+            $technicalEmail=trim((string)($technical['email']??''));
+            $technicalContact=trim((string)($technical['contact']??''));
+            if(strlen((string)$technicalCnpj)!==14||$technicalContact===''||!filter_var($technicalEmail,FILTER_VALIDATE_EMAIL)||!in_array(strlen((string)$technicalPhone),[10,11],true))throw new RuntimeException('TECHNICAL_RESPONSIBLE_MISSING: Informe CNPJ, contato, e-mail e telefone do responsável técnico.');
+            $technicalTag=['CNPJ'=>$technicalCnpj,'xContato'=>substr($technicalContact,0,60),'email'=>$technicalEmail,'fone'=>$technicalPhone];
+            if(trim((string)($technical['idCSRT']??''))!==''&&trim((string)($technical['CSRT']??''))!==''){$technicalTag['idCSRT']=$technical['idCSRT'];$technicalTag['CSRT']=$technical['CSRT'];}
+            $make->taginfRespTec((object)$technicalTag);
+        }
         return $make->getXML();
     }
-    private function address(array $a): object{return(object)['xLgr'=>$a['street']??$a['logradouro']??$a['endereco']??'','nro'=>$a['number']??$a['numero']??'','xCpl'=>$a['complement']??$a['complemento']??null,'xBairro'=>$a['district']??$a['bairro']??'','cMun'=>$a['city_ibge_code']??$a['codigo_ibge']??$a['municipio_ibge']??'','xMun'=>$a['city_name']??$a['municipio']??$a['cidade']??'','UF'=>$a['state']??$a['uf']??$a['estado']??'','CEP'=>$a['postal_code']??$a['cep']??'','cPais'=>$a['country_code']??null,'xPais'=>$a['country_name']??null,'fone'=>$a['phone']??$a['telefone']??null];}
+    private function address(array $a): object
+    {
+        $digits = static fn(mixed $value): string => preg_replace('/\D/', '', (string)$value) ?? '';
+        $phone = $digits($a['phone'] ?? $a['telefone'] ?? '');
+        return (object)[
+            'xLgr'=>$a['street']??$a['logradouro']??$a['endereco']??'',
+            'nro'=>$a['number']??$a['numero']??'',
+            'xCpl'=>$a['complement']??$a['complemento']??null,
+            'xBairro'=>$a['district']??$a['bairro']??'',
+            'cMun'=>$digits($a['city_ibge_code']??$a['codigo_ibge']??$a['municipio_ibge']??''),
+            'xMun'=>$a['city_name']??$a['municipio']??$a['cidade']??'',
+            'UF'=>$a['state']??$a['uf']??$a['estado']??'',
+            'CEP'=>$digits($a['postal_code']??$a['cep']??''),
+            'cPais'=>$a['country_code']??null,
+            'xPais'=>$a['country_name']??null,
+            'fone'=>$phone!==''?$phone:null,
+        ];
+    }
 
     private function requiredTax(array $tax,string $group,int $item):array{$value=$tax[$group]??null;if(!is_array($value)||$value===[])throw new RuntimeException("FISCAL_RULE_NOT_FOUND: {$group} ausente no item {$item}.");return$value;}
     private function contributionTag(array $tax,int $item,string $name):array{$tag=['item'=>$item];$map=['cst'=>'CST','CST'=>'CST','base'=>'vBC','vBC'=>'vBC','rate'=>'p'.$name,'p'.$name=>'p'.$name,'amount'=>'v'.$name,'v'.$name=>'v'.$name,'quantity'=>'qBCProd','unit_rate'=>'vAliqProd'];foreach($map as$from=>$to)if(array_key_exists($from,$tax))$tag[$to]=$tax[$from];if(!isset($tag['CST']))throw new RuntimeException("FISCAL_RULE_NOT_FOUND: CST {$name} ausente no item {$item}.");return$tag;}

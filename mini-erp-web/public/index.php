@@ -884,6 +884,8 @@ if (is_dir($imagesDir)) {
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('app-feedback.css')) ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('ui-forms.css')) ?>">
     <link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('fiscal-notes.css')) ?>">
+    <?php if($page === 'pedidos'): ?><link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('order-editor.css')) ?>"><?php endif; ?>
+    <?php if($page === 'cadastro' && ($_GET['tab']??'') === 'xml'): ?><link rel="stylesheet" href="<?= htmlspecialchars($assetUrl('xml-catalog.css')) ?>"><?php endif; ?>
     <script src="https://unpkg.com/feather-icons"></script>
     <script src="<?= htmlspecialchars($assetUrl('cnpj-lookup.js')) ?>" defer></script>
     <script src="<?= htmlspecialchars($assetUrl('app-ui.js')) ?>" defer></script>
@@ -945,6 +947,7 @@ if (is_dir($imagesDir)) {
                             <li><a href="?page=cadastro&tab=pessoas">Pessoas</a></li>
                             <li><a href="?page=cadastro&tab=produtos">Produtos</a></li>
                             <li><a href="?page=cadastro&tab=cfops">CFOPs</a></li>
+                            <li><a href="?page=cadastro&tab=xml">Cadastro por XML</a></li>
                         </ul>
                     </li>
 
@@ -999,6 +1002,7 @@ if (is_dir($imagesDir)) {
                                 <a href="?page=cadastro&tab=pessoas">Pessoas</a>
                                 <a href="?page=cadastro&tab=produtos">Produtos</a>
                                 <a href="?page=cadastro&tab=cfops">CFOPs</a>
+                                <a href="?page=cadastro&tab=xml">Cadastro por XML</a>
                             </div>
                         </div>
                         <div class="menu-item-wrapper"><a class="menu-item <?= navClass('estoque', $page) ?>" href="?page=estoque">ESTOQUE</a></div>
@@ -1145,7 +1149,7 @@ if (is_dir($imagesDir)) {
                         $viewDocument['totals']['model'] = $documentOrder['fiscal_model'];
                     }
                     ?>
-                    <div class="order-page-shell">
+                    <div class="order-page-shell<?= $tab !== 'emitidos' ? ' order-editor-page' : '' ?>">
                         <div class="order-page-header">
                             <div class="order-page-header__crumbs">
                                 <a href="?page=pedidos">Pedidos</a>
@@ -1473,6 +1477,14 @@ if (is_dir($imagesDir)) {
                                             <input type="text" name="frete" value="0">
                                         </div>
                                         <div class="field-wrap">
+                                            <label>Seguro</label>
+                                            <input type="number" step="0.01" min="0" name="seguro" value="0">
+                                        </div>
+                                        <div class="field-wrap">
+                                            <label>Outras despesas</label>
+                                            <input type="number" step="0.01" min="0" name="outras_despesas" value="0">
+                                        </div>
+                                        <div class="field-wrap">
                                             <label>Desconto %</label>
                                             <input type="number" step="0.01" name="desconto_percent" value="0">
                                         </div>
@@ -1497,14 +1509,14 @@ if (is_dir($imagesDir)) {
                                 <div class="order-action-bar" role="toolbar" aria-label="Ações do pedido" data-order-action-bar>
                                     <div class="order-action-bar__intro"><strong>Ações</strong><span>Pedido</span></div>
                                     <div class="order-action-bar__buttons">
-                                        <button class="order-routine order-routine--primary" type="submit" name="action" value="save_fiscal_order" data-order-action="save" title="Gravar e mostrar na lista de Pedidos" aria-label="Gravar pedido"><span class="order-routine__icon" aria-hidden="true">✓</span><span data-order-label>Gravar</span></button>
-                                        <button class="order-routine order-routine--fiscal" type="submit" data-fiscal-action="finalize" data-order-action="note" title="Salvar e preparar documento interno na Central de Notas" aria-label="Preparar nota"><span class="order-routine__icon" aria-hidden="true">▤</span><span data-order-label>Preparar Nota</span></button>
-                                        <button id="fiscal-preview-submit" class="order-routine order-routine--preview" type="submit" data-fiscal-action="preview" data-order-action="print" title="Abrir prévia DANFE ou DANFC-e em uma nova guia" aria-label="Gerar prévia fiscal"><span class="order-routine__icon" aria-hidden="true">▧</span><span data-order-label><?= $previewSelectedModel==='65'?'Prévia DANFC-e':'Prévia DANFE' ?></span></button>
-                                        <?php if($canUseOrderTestFill): ?><button class="order-routine order-routine--test" type="button" data-order-test-fill title="Preencher o formulário com dados existentes para teste; não salva automaticamente" aria-label="Preencher dados de teste"><span class="order-routine__icon" aria-hidden="true">⚡</span><span>Preencher teste</span></button><?php endif; ?>
+                                        <button class="order-routine order-routine--primary" type="submit" name="action" value="save_fiscal_order" data-order-action="save" title="Gravar e mostrar na lista de Pedidos" aria-label="Gravar pedido"><svg class="erp-icon order-routine__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg><span data-order-label>Gravar</span></button>
+                                        <button class="order-routine order-routine--fiscal" type="submit" data-fiscal-action="finalize" data-order-action="note" title="Salvar e preparar documento interno na Central de Notas" aria-label="Preparar nota"><svg class="erp-icon order-routine__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5Z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg><span data-order-label>Preparar Nota</span></button>
+                                        <button id="fiscal-preview-submit" class="order-routine order-routine--preview" type="submit" data-fiscal-action="preview" data-order-action="print" title="Abrir prévia DANFE ou DANFC-e em uma nova guia" aria-label="Gerar prévia fiscal"><svg class="erp-icon order-routine__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14" rx="1"/></svg><span data-order-label><?= $previewSelectedModel==='65'?'Prévia DANFC-e':'Prévia DANFE' ?></span></button>
+                                        <?php if($canUseOrderTestFill): ?><button class="order-routine order-routine--test" type="button" data-order-test-fill title="Preencher o formulário com dados existentes para teste; não salva automaticamente" aria-label="Preencher dados de teste"><svg class="erp-icon order-routine__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9Z"/></svg><span>Preencher teste</span></button><?php endif; ?>
                                         <span class="order-action-bar__divider" aria-hidden="true"></span>
-                                        <button class="order-routine order-routine--secondary" type="button" data-order-new data-new-url="?page=pedidos&amp;tab=<?= urlencode($tab) ?>" title="Iniciar novo pedido" aria-label="Novo pedido"><span class="order-routine__icon" aria-hidden="true">＋</span><span data-order-label>Novo</span></button>
-                                        <button class="order-routine order-routine--disabled" type="button" disabled title="Financeiro será integrado ao módulo de contas e estoque." aria-label="Financeiro — em breve"><span class="order-routine__icon" aria-hidden="true">$</span><span>Financeiro</span></button>
-                                        <?php if($tab==='entrada'): ?><button class="order-routine order-routine--disabled" type="button" disabled title="Importação de XML estará disponível em breve." aria-label="Importar XML — em breve"><span class="order-routine__icon" aria-hidden="true">⇧</span><span>Importar XML</span></button><?php endif; ?>
+                                        <button class="order-routine order-routine--secondary" type="button" data-order-new data-new-url="?page=pedidos&amp;tab=<?= urlencode($tab) ?>" title="Iniciar novo pedido" aria-label="Novo pedido"><svg class="erp-icon order-routine__icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg><span data-order-label>Novo</span></button>
+                                        <button class="order-routine order-routine--disabled" type="button" disabled title="Financeiro será integrado ao módulo de contas e estoque." aria-label="Financeiro — em breve"><svg class="erp-icon order-routine__icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8M12 18V6"/></svg><span>Financeiro</span></button>
+                                        <?php if($tab==='entrada'): ?><button class="order-routine order-routine--secondary" type="button" data-order-import-xml title="Selecionar XML de NF-e de entrada" aria-label="Importar XML de entrada"><svg class="erp-icon order-routine__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5Z"/><path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3"/></svg><span>Importar XML</span></button><input type="file" accept=".xml,text/xml,application/xml" data-order-import-xml-file hidden><?php endif; ?>
                                     </div>
                                 </div>
                                 <div class="order-action-feedback" role="status" aria-live="polite" hidden></div>
@@ -1522,6 +1534,28 @@ if (is_dir($imagesDir)) {
                                 const isDirty=()=>new URLSearchParams(new FormData(form)).toString()!==initial;
                                 const confirmLeave=()=>!isDirty()||window.confirm('Existem alterações não salvas. Deseja iniciar um novo pedido?');
                                 const showError=message=>{if(!feedback)return;feedback.hidden=false;feedback.className='order-action-feedback message error';feedback.textContent=message;feedback.scrollIntoView({block:'nearest'});};
+                                const showInfo=message=>{if(!feedback)return;feedback.hidden=false;feedback.className='order-action-feedback message success';feedback.textContent=message;};
+                                const xmlImportButton=form.querySelector('[data-order-import-xml]');
+                                const xmlImportFile=form.querySelector('[data-order-import-xml-file]');
+                                xmlImportButton?.addEventListener('click',()=>xmlImportFile?.click());
+                                xmlImportFile?.addEventListener('change',async()=>{
+                                    const file=xmlImportFile.files?.[0];if(!file)return;
+                                    if(!file.name.toLowerCase().endsWith('.xml')){xmlImportFile.value='';showError('Selecione um arquivo XML de NF-e.');return;}
+                                    const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+                                    const request=async action=>{const body=new FormData();body.set('xml',file);body.set('xml_action',action);body.set('csrf_token',form.querySelector('[name="csrf_token"]')?.value||'');if(action!=='analyze')body.set('confirm_supplier','1');const response=await fetch('entry_xml_import.php',{method:'POST',body,credentials:'same-origin',headers:{Accept:'application/json'}});const payload=await response.json().catch(()=>({success:false,message:'Resposta inválida do servidor.'}));if(!response.ok||!payload.success)throw new Error(payload.message||'Não foi possível importar o XML.');return payload;};
+                                    try{
+                                        xmlImportButton.disabled=true;xmlImportButton.setAttribute('aria-busy','true');showInfo(`Analisando ${file.name}...`);
+                                        const payload=await request('analyze'),analysis=payload.analysis,supplier=analysis.supplier,invoice=analysis.invoice;
+                                        const mismatch=!invoice.recipient_match;
+                                        const dialog=document.createElement('dialog');dialog.className='xml-import-dialog';dialog.innerHTML=`<form method="dialog" class="xml-import-card"><header><div><small>Leitura de XML</small><h2>Escolha o tipo de importação</h2></div><button value="cancel" aria-label="Fechar">×</button></header><div class="xml-import-local-error" data-xml-error hidden></div>${mismatch?`<section class="xml-import-recipient-warning"><strong>Este XML não pertence à empresa ativa</strong><p>Ele pode cadastrar o fornecedor, produtos e impostos, mas não pode gerar uma entrada nem movimentar estoque.</p><p>XML: ${escape(invoice.recipient_document)} · Empresa: ${escape(invoice.establishment_document||'não configurada')}</p></section>`:''}<section class="xml-import-supplier"><span>${supplier.existing_id?'Fornecedor já cadastrado':'Novo fornecedor será cadastrado'}</span><strong>${escape(supplier.name)}</strong><p>CNPJ/CPF: ${escape(supplier.document)} · IE: ${escape(supplier.state_registration||'não informada')}</p><p>${escape(supplier.street)}, ${escape(supplier.number)} · ${escape(supplier.city)}/${escape(supplier.state)}</p></section><div class="xml-import-summary"><div><span>NF-e</span><strong>${escape(invoice.number)}</strong></div><div><span>Produtos</span><strong>${analysis.summary.items}</strong></div><div><span>Novos</span><strong>${analysis.summary.new_products}</strong></div><div><span>Total</span><strong>R$ ${Number(invoice.total).toFixed(2).replace('.',',')}</strong></div></div><p class="xml-import-cfop ${invoice.cfop_id?'':'warning'}">CFOP de saída ${escape(invoice.source_cfop)} → entrada ${escape(invoice.entry_cfop)}${invoice.cfop_id?'':' — este CFOP ainda não está cadastrado; selecione-o manualmente depois.'}</p><div class="xml-import-products">${analysis.items.slice(0,12).map(item=>`<p><strong>${escape(item.code)}</strong> ${escape(item.name)} <span>${item.existing_product_id?'vincular':'cadastrar'}</span></p>`).join('')}${analysis.items.length>12?`<p>... e mais ${analysis.items.length-12} produto(s).</p>`:''}</div><footer><button value="cancel" class="btn secondary">Cancelar</button><button type="button" class="btn secondary" data-catalog-xml>Somente cadastrar</button><button type="button" class="btn primary" data-confirm-xml ${mismatch?'disabled title="Disponível somente quando o XML for destinado à empresa"':''}>Importar como entrada</button></footer></form>`;
+                                        document.body.appendChild(dialog);dialog.addEventListener('close',()=>{dialog.remove();if(dialog.returnValue==='cancel')xmlImportFile.value='';});dialog.showModal();
+                                        const localError=dialog.querySelector('[data-xml-error]');
+                                        const runCatalog=async button=>{button.disabled=true;button.textContent='Cadastrando...';try{const imported=await request('catalog');dialog.close('catalog');showInfo(imported.message);xmlImportFile.value='';}catch(error){button.disabled=false;button.textContent='Tentar cadastrar';localError.hidden=false;localError.textContent=error.message;}};
+                                        dialog.querySelector('[data-catalog-xml]')?.addEventListener('click',event=>runCatalog(event.currentTarget));
+                                        dialog.querySelector('[data-confirm-xml]')?.addEventListener('click',async event=>{const button=event.currentTarget;button.disabled=true;button.textContent='Importando...';try{const imported=await request('import'),result=imported.result;const supplierSelect=form.elements.namedItem('fornecedor_id');if(supplierSelect){let option=[...supplierSelect.options].find(item=>item.value===String(result.supplier_id));if(!option){option=new Option(result.supplier_name,String(result.supplier_id));supplierSelect.add(option)}supplierSelect.value=String(result.supplier_id);supplierSelect.dispatchEvent(new Event('change',{bubbles:true}));}const setValue=(name,value)=>{const field=form.elements.namedItem(name);if(field&&value!==null&&value!==undefined){field.value=String(value);field.dispatchEvent(new Event('change',{bubbles:true}));field.dispatchEvent(new Event('input',{bubbles:true}));}};setValue('data_venda',result.invoice.date);setValue('codigo_interno',analysis.access_key||`NFE-${result.invoice.number}`);setValue('fiscal_model','55');setValue('freight_mode',result.invoice.freight_mode);setValue('frete',result.invoice.freight);setValue('seguro',result.invoice.insurance);setValue('outras_despesas',result.invoice.other);setValue('desconto_valor',result.invoice.discount);setValue('observacoes',result.invoice.notes);if(result.invoice.cfop_id)setValue('cfop_id',result.invoice.cfop_id);window.dispatchEvent(new CustomEvent('erp:entry-xml-products',{detail:result.products}));dialog.close('imported');showInfo(imported.message);xmlImportFile.value='';}catch(error){button.disabled=false;button.textContent='Tentar novamente';localError.hidden=false;localError.textContent=error.message;}});
+                                    }catch(error){xmlImportFile.value='';showError(error.message||'Não foi possível ler o XML selecionado.');}
+                                    finally{xmlImportButton.disabled=false;xmlImportButton.removeAttribute('aria-busy');}
+                                });
                                 document.querySelector('[data-order-new]')?.addEventListener('click',event=>{if(confirmLeave())location.href=event.currentTarget.dataset.newUrl;});
                                 document.querySelector('[data-order-cancel]')?.addEventListener('click',()=>{if(confirmLeave())location.href='?page=pedidos&tab=emitidos';});
                                 const fiscalModelSelect=document.getElementById('fiscal-model-select');const fiscalPreviewSubmit=document.getElementById('fiscal-preview-submit');
@@ -1599,9 +1633,9 @@ if (is_dir($imagesDir)) {
                         $_GET['people_type'] = $legacyPeopleTabs[$tab];
                         $tab = 'pessoas';
                     }
-                    if (!in_array($tab, ['pessoas', 'produtos', 'cfops'], true)) $tab = 'pessoas';
+                    if (!in_array($tab, ['pessoas', 'produtos', 'cfops', 'xml'], true)) $tab = 'pessoas';
                     $_SESSION['erp_master_data_csrf'] ??= bin2hex(random_bytes(24));
-                    require __DIR__ . '/includes/master_data_configuration.php';
+                    if($tab==='xml')require __DIR__.'/includes/xml_catalog_registration.php';else require __DIR__ . '/includes/master_data_configuration.php';
                     if (false):
                     ?>
                     <section class="page-header">

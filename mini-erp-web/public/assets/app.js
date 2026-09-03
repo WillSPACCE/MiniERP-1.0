@@ -683,6 +683,18 @@ document.addEventListener('DOMContentLoaded', function () {
     // Inicializa autocomplete quando houver campo de busca
     createAutocomplete();
     (window.ORDER_ITEMS || []).forEach(saved => addItem({id:saved.id,codigo:saved.codigo,nome:saved.nome,un:saved.unidade,preco:saved.unit_price,stock_control_by_lot:Boolean(Number(saved.stock_control_by_lot||0))}, saved));
+    window.addEventListener('erp:entry-xml-products', event => {
+        if (!tbody || !Array.isArray(event.detail)) return;
+        tbody.querySelectorAll('tr.item-row').forEach(row => row.remove());
+        event.detail.forEach(product => {
+            const catalogProduct = {...product}; delete catalogProduct.saved;
+            window.PRODUCTS = window.PRODUCTS || [];
+            const existingIndex = window.PRODUCTS.findIndex(item => String(item.id) === String(catalogProduct.id));
+            if (existingIndex >= 0) window.PRODUCTS[existingIndex] = catalogProduct; else window.PRODUCTS.push(catalogProduct);
+            addItem(catalogProduct, product.saved || null);
+        });
+        computeTotals();
+    });
 
     function computeTotals() {
         if (!tbody) return;
@@ -696,7 +708,10 @@ document.addEventListener('DOMContentLoaded', function () {
             total += subtotal;
         });
         if (totalProdutos) totalProdutos.textContent = formatCurrencyBR(total);
-        if (valorTotal) valorTotal.textContent = formatCurrencyBR(total);
+        const orderForm = document.getElementById('pedido-form');
+        const adjustment = name => Number(String(orderForm?.elements.namedItem(name)?.value || '0').replace(',', '.')) || 0;
+        const grandTotal = Math.max(0, total + adjustment('frete') + adjustment('seguro') + adjustment('outras_despesas') - adjustment('desconto_valor'));
+        if (valorTotal) valorTotal.textContent = formatCurrencyBR(grandTotal);
     }
 
     if (search) {
@@ -717,6 +732,7 @@ document.addEventListener('DOMContentLoaded', function () {
         renderNoItems();
         computeTotals();
     });
+    document.querySelectorAll('#pedido-form [name="frete"],#pedido-form [name="seguro"],#pedido-form [name="outras_despesas"],#pedido-form [name="desconto_valor"]').forEach(field=>field.addEventListener('input',computeTotals));
 
     const testFillButton = document.querySelector('[data-order-test-fill]');
     if (testFillButton) testFillButton.addEventListener('click', function () {
@@ -800,6 +816,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
 })();
+
+/* Destaca somente os dados invariavelmente necessários para montar/transmitir a NF-e. */
+(()=>{const form=document.querySelector('#pedido-form');if(!form)return;const exact={operation_nature:'ide.natOp / CFOP',fiscal_model:'ide.mod',purpose:'ide.finNFe',presence_indicator:'ide.indPres',cliente_id:'dest',fornecedor_id:'dest',data_venda:'ide.dhEmi',documento:'pag.detPag.tPag',condicao_pagamento:'pag',cfop_id:'det.prod.CFOP'};const mark=field=>{if(!field||field.type==='hidden')return;const name=field.name||'',tag=exact[name]||(name.includes('[produto_id]')?'det.prod':name.includes('[quantidade]')?'det.prod.qCom/qTrib':name.includes('[preco_unitario]')?'det.prod.vUnCom/vUnTrib':'');if(!tag)return;const container=field.closest('.order-field,.field-wrap,.item-cell,label')||field.parentElement;container?.classList.add('sefaz-required');container?.setAttribute('data-sefaz-tag',tag);field.setAttribute('aria-required','true');field.required=true};const scan=()=>form.querySelectorAll('input[name],select[name],textarea[name]').forEach(mark);const legend=document.createElement('p');legend.className='sefaz-required-legend';legend.innerHTML='<strong><span aria-hidden="true">*</span> Obrigatório para SEFAZ</strong> Campos contornados alimentam tags obrigatórias do XML. Campos condicionais são validados conforme a operação.';form.prepend(legend);scan();new MutationObserver(scan).observe(form,{childList:true,subtree:true})})();
 
 // Gráficos responsivos do Dashboard com escala linear real e tooltips em pt-BR.
 (() => {

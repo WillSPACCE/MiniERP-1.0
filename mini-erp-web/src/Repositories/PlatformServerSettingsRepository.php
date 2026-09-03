@@ -6,6 +6,7 @@ use PDO;
 
 final class PlatformServerSettingsRepository
 {
+    private const SEFAZ_ALLOWED=['sefaz_technical_cnpj','sefaz_technical_contact','sefaz_technical_email','sefaz_technical_phone','sefaz_csrt_id','sefaz_csrt_env'];
     private const ALLOWED=['planned_domain','planned_subdomain','domain_registrar','cloudflare_account_id','cloudflare_zone_id','infrastructure_contact_email','public_base_url','cloudflare_hostname','cloudflare_tunnel_id','cloudflared_path','cloudflare_token_env','backup_root','backup_retention_days','cloudflare_access_enabled','force_https','maintenance_mode','maintenance_message'];
     public function __construct(private PDO $pdo){}
     public function all():array
@@ -27,5 +28,27 @@ final class PlatformServerSettingsRepository
         foreach(['maintenance_mode','cloudflare_access_enabled','force_https']as$key)$values[$key]=!empty($input[$key])?'1':'0';
         if(mb_strlen($values['maintenance_message'])>500)throw new InvalidArgumentException('A mensagem de manutenção deve ter até 500 caracteres.');
         $stmt=$this->pdo->prepare('INSERT INTO platform_server_settings(setting_key,setting_value,updated_by) VALUES(?,?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),updated_by=VALUES(updated_by)');$this->pdo->beginTransaction();try{foreach($values as$key=>$value)$stmt->execute([$key,$value,$actorId]);$this->pdo->commit();}catch(\Throwable$e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw$e;}
+    }
+
+    public function sefazTechnical():array
+    {
+        $defaults=['sefaz_technical_cnpj'=>'','sefaz_technical_contact'=>'','sefaz_technical_email'=>'','sefaz_technical_phone'=>'','sefaz_csrt_id'=>'','sefaz_csrt_env'=>'MINI_ERP_SEFAZ_CSRT'];
+        $rows=$this->pdo->query("SELECT setting_key,setting_value FROM platform_server_settings WHERE setting_key LIKE 'sefaz_%'")->fetchAll(PDO::FETCH_KEY_PAIR);
+        return array_replace($defaults,array_intersect_key($rows?:[],$defaults));
+    }
+
+    public function saveSefazTechnical(array $input,int $actorId):void
+    {
+        $values=[];foreach(self::SEFAZ_ALLOWED as$key)$values[$key]=trim((string)($input[$key]??''));
+        $values['sefaz_technical_cnpj']=preg_replace('/\D/','',$values['sefaz_technical_cnpj'])??'';
+        $values['sefaz_technical_phone']=preg_replace('/\D/','',$values['sefaz_technical_phone'])??'';
+        if(strlen($values['sefaz_technical_cnpj'])!==14)throw new InvalidArgumentException('Informe o CNPJ do responsável técnico com 14 dígitos.');
+        if($values['sefaz_technical_contact']===''||mb_strlen($values['sefaz_technical_contact'])>60)throw new InvalidArgumentException('Informe o contato técnico com até 60 caracteres.');
+        if(!filter_var($values['sefaz_technical_email'],FILTER_VALIDATE_EMAIL))throw new InvalidArgumentException('Informe um e-mail válido do responsável técnico.');
+        if(!in_array(strlen($values['sefaz_technical_phone']),[10,11],true))throw new InvalidArgumentException('Informe o telefone técnico com DDD.');
+        if($values['sefaz_csrt_id']!==''&&!preg_match('/^\d{2}$/',$values['sefaz_csrt_id']))throw new InvalidArgumentException('O ID do CSRT deve conter 2 dígitos.');
+        if($values['sefaz_csrt_env']===''||!preg_match('/^[A-Z][A-Z0-9_]{2,79}$/',$values['sefaz_csrt_env']))throw new InvalidArgumentException('Informe somente o nome da variável de ambiente do CSRT.');
+        $stmt=$this->pdo->prepare('INSERT INTO platform_server_settings(setting_key,setting_value,updated_by) VALUES(?,?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),updated_by=VALUES(updated_by)');
+        $this->pdo->beginTransaction();try{foreach($values as$key=>$value)$stmt->execute([$key,$value,$actorId]);$this->pdo->commit();}catch(\Throwable$e){if($this->pdo->inTransaction())$this->pdo->rollBack();throw$e;}
     }
 }

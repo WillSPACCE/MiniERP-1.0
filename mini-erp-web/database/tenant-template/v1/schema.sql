@@ -110,9 +110,26 @@ CREATE TABLE IF NOT EXISTS itens_venda (
 CREATE TABLE IF NOT EXISTS product_taxes (
     product_id INT PRIMARY KEY,
     ipi VARCHAR(50) DEFAULT '',
+    ipi_output_cst VARCHAR(2) NULL,
+    ipi_output_rate DECIMAL(15,6) NULL,
+    ipi_input_cst VARCHAR(2) NULL,
     icms VARCHAR(50) DEFAULT '',
+    icms_cst VARCHAR(3) NULL,
+    icms_csosn VARCHAR(3) NULL,
+    icms_consumer_cst VARCHAR(3) NULL,
+    icms_rate DECIMAL(15,6) NULL,
     pis VARCHAR(50) DEFAULT '',
+    pis_output_cst VARCHAR(2) NULL,
+    pis_output_rate DECIMAL(15,6) NULL,
+    pis_input_cst VARCHAR(2) NULL,
+    pis_input_rate DECIMAL(15,6) NULL,
     cofins VARCHAR(50) DEFAULT '',
+    cofins_output_cst VARCHAR(2) NULL,
+    cofins_output_rate DECIMAL(15,6) NULL,
+    cofins_input_cst VARCHAR(2) NULL,
+    cofins_input_rate DECIMAL(15,6) NULL,
+    source_document VARCHAR(160) NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_taxes_produto FOREIGN KEY (product_id) REFERENCES produtos(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

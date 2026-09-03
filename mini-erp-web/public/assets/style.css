@@ -1,3 +1,11 @@
+@font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('./fonts/inter-latin-400-700.woff2') format('woff2');
+}
+
 :root {
     --bg: #f4f7fb;
     --panel: #ffffff;
@@ -24,7 +32,12 @@
 
 body {
     margin: 0;
-    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: 'Inter', sans-serif;
+    font-weight: 400;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     background: var(--bg);
     color: var(--text);
     opacity: 0;
@@ -36,9 +49,14 @@ body.page-ready {
     opacity: 1;
 }
 
-button, input, select, textarea {
-    font: inherit;
+button, input, select, textarea, table, label, h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', sans-serif;
 }
+
+button, input, select, textarea { font-weight: 400; }
+label { font-weight: 500; }
+h1 { font-weight: 700; }
+h2, h3, h4, h5, h6 { font-weight: 600; }
 
 .app-shell {
     min-height: 100vh;
@@ -2544,3 +2562,8 @@ th {
 .stock-filters{display:grid;grid-template-columns:minmax(190px,1.4fr) repeat(3,minmax(135px,.7fr)) auto;gap:10px;align-items:end;margin-bottom:16px;padding:13px;border:1px solid var(--border);border-radius:12px;background:color-mix(in srgb,var(--panel) 96%,var(--primary) 4%)}.stock-filters label{display:grid;gap:5px;color:var(--muted);font-size:.7rem;font-weight:800}.stock-filters input,.stock-filters select{width:100%;min-height:40px}.stock-filters>div{display:flex;gap:6px}.stock-product time{display:block;margin-top:4px;color:var(--muted);font-size:.65rem}.stock-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border);color:var(--muted);font-size:.75rem}.stock-pagination nav{display:flex;flex-wrap:wrap;gap:5px}.stock-pagination a{display:grid;place-items:center;min-width:36px;min-height:36px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--primary);text-decoration:none;font-weight:800}.stock-pagination a.active{border-color:var(--primary);background:var(--primary);color:#fff}
 @media(max-width:900px){.stock-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.stock-filters>div{grid-column:1/-1}}
 @media(max-width:620px){.stock-filters{grid-template-columns:1fr}.stock-filters>div{grid-column:1}.stock-filters .btn{flex:1}.stock-pagination{align-items:flex-start;flex-direction:column}}
+/* Mantém também as prévias internas na família visual da aplicação. */
+.fiscal-preview { font-family: 'Inter', sans-serif; }
+
+/* Obrigatoriedade fiscal derivada do preflight/XML. */
+.sefaz-required{position:relative}.sefaz-required>label:first-child::after,.sefaz-required label:first-child::after{color:#c2410c;content:" *";font-size:14px;font-weight:900}.sefaz-required::after{background:#fff7ed;border:1px solid #fed7aa;border-radius:999px;color:#9a3412;content:attr(data-sefaz-tag);font-size:9px;font-weight:900;line-height:1;max-width:calc(100% - 8px);overflow:hidden;padding:3px 6px;position:absolute;right:4px;text-overflow:ellipsis;top:2px;white-space:nowrap}.sefaz-required input,.sefaz-required select,.sefaz-required textarea{border:2px solid #e38b16!important;background:#fffdf7!important}.sefaz-required:focus-within input,.sefaz-required:focus-within select,.sefaz-required:focus-within textarea{border-color:var(--primary)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 18%,transparent)!important}.sefaz-required-legend{align-items:center;background:#fffaf0;border:1px solid #fed7aa;border-radius:10px;color:#7c4a13;display:flex;gap:10px;margin:0 0 14px;padding:10px 12px;font-size:.72rem}.sefaz-required-legend strong{white-space:nowrap}.sefaz-required-legend strong span{color:#c2410c;font-size:16px}

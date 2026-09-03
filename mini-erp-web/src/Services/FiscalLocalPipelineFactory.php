@@ -6,6 +6,7 @@ namespace MiniErp\Services;
 use MiniErp\Fiscal\{A1CertificateInspector,FiscalArtifactStorage,FiscalMasterKey,LocalEncryptedSecretStorage,OperationalCertificateProvider,PrivateCertificateStorage};
 use MiniErp\Repositories\{FiscalConfigurationRepository,FiscalDocumentEventRepository,FiscalOperationRepository};
 use PDO;
+use MiniErp\Repositories\PlatformServerSettingsRepository;
 
 final class FiscalLocalPipelineFactory
 {
@@ -23,6 +24,13 @@ final class FiscalLocalPipelineFactory
             new LocalEncryptedSecretStorage($storageRoot . '/storage/fiscal/secrets', FiscalMasterKey::resolve($storageRoot)),
             $configuration,
         );
+        $technicalResponsible=[];
+        try{
+            $appConfig=require $root.'/config.php';$db=$appConfig['db'];
+            $main=new PDO("mysql:host={$db['host']};port={$db['port']};dbname={$db['database']};charset=utf8mb4",$db['username'],$db['password'],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+            $sefaz=(new PlatformServerSettingsRepository($main))->sefazTechnical();
+            if($sefaz['sefaz_technical_cnpj']!=='')$technicalResponsible=['cnpj'=>$sefaz['sefaz_technical_cnpj'],'contact'=>$sefaz['sefaz_technical_contact'],'email'=>$sefaz['sefaz_technical_email'],'phone'=>$sefaz['sefaz_technical_phone'],'idCSRT'=>$sefaz['sefaz_csrt_id'],'CSRT'=>(string)(getenv($sefaz['sefaz_csrt_env'])?:'')];
+        }catch(\Throwable){}
         return new OfflineFiscalDocumentPipelineService(
             $pdo,
             new FiscalOperationRepository($pdo, $tenantId),
@@ -30,6 +38,7 @@ final class FiscalLocalPipelineFactory
             $certificate,
             artifactStorage: new FiscalArtifactStorage($storageRoot . '/storage/fiscal/artifacts'),
             events: new FiscalDocumentEventRepository($pdo, $tenantId),
+            technicalResponsible: $technicalResponsible,
         );
     }
 }

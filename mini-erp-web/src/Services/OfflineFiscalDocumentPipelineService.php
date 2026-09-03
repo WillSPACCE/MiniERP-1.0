@@ -35,6 +35,7 @@ final class OfflineFiscalDocumentPipelineService
         private readonly ?FiscalNfeXmlBuilder $xmlBuilder = null,
         private readonly ?FiscalDocumentEventRepository $events = null,
         private readonly ?FiscalDocumentPreflightService $preflight = null,
+        private readonly array $technicalResponsible = [],
     ) {}
 
     public function prepare(int $tenantId, int $fiscalDocumentId, int $actorId): array
@@ -141,7 +142,7 @@ final class OfflineFiscalDocumentPipelineService
             $series = $this->resolveSeries($configurationRepo, $establishmentId, $model, 2);
             $reservation = $reservationRepo->findByDocumentVersion($fiscalDocumentId, $documentVersion);
             if ($reservation === null) {
-                $allocator->reserve($establishmentId, $model, (int) $series['series'], (int) $fiscalDocumentId, $actorId);
+                $allocator->reserve($establishmentId, $model, (int) $series['series'], (int) $fiscalDocumentId, $actorId, $documentVersion);
                 $reservation = $reservationRepo->findByDocumentVersion($fiscalDocumentId, $documentVersion);
                 if ($reservation !== null) $event('NUMBER_RESERVED', 'NUMBER', 'OK', null, 'Numeração fiscal reservada.', ['reservation_id' => (int)$reservation['id']]);
             }
@@ -165,7 +166,7 @@ final class OfflineFiscalDocumentPipelineService
             $accessKey = (string) ($reservation['access_key'] ?? '');
             if ($accessKey === '') {
                 $accessKey = $keyGenerator->generate(
-                    (string) ($issuer['state_code'] ?? $issuer['uf'] ?? '35'),
+                    $this->ufCode($issuer),
                     date('ym'),
                     $issuerTaxId,
                     $model,
@@ -201,7 +202,7 @@ final class OfflineFiscalDocumentPipelineService
                 'number' => $number,
                 'access_key' => $accessKey,
                 'numeric_code' => $numericCode,
-                'uf_code' => (string) ($issuer['state_code'] ?? $issuer['uf'] ?? '35'),
+                'uf_code' => $this->ufCode($issuer),
                 'issued_at' => date('c'),
                 'environment' => (int) ($series['environment'] ?? 2),
                 'emission_type' => 1,
@@ -212,7 +213,7 @@ final class OfflineFiscalDocumentPipelineService
             $event('XML_BUILD_STARTED', 'XML_BUILD', 'PROCESSING', null, 'Geração do XML iniciada.');
             $unsignedXml = $xmlBuilder->build($dto, [
                 'access_key' => $accessKey,
-                'uf_code' => (string) ($issuer['state_code'] ?? $issuer['uf'] ?? '35'),
+                'uf_code' => $this->ufCode($issuer),
                 'numeric_code' => $numericCode,
                 'series' => (int) $series['series'],
                 'number' => $number,
@@ -221,6 +222,7 @@ final class OfflineFiscalDocumentPipelineService
                 'emission_type' => 1,
                 'destination_scope' => 1,
                 'process_version' => 'MiniERP-FISCAL-06B-C3',
+                'technical_responsible' => $this->technicalResponsible,
             ]);
             $event('XML_GENERATED', 'XML_BUILD', 'OK', null, 'XML gerado localmente.');
 
@@ -329,6 +331,16 @@ final class OfflineFiscalDocumentPipelineService
         $hash = substr(hash('sha256', $base), 0, 8);
         $code = (int) hexdec($hash) % 100000000;
         return str_pad((string) $code, 8, '0', STR_PAD_LEFT);
+    }
+
+    private function ufCode(array $issuer): string
+    {
+        $explicit = preg_replace('/\D/', '', (string)($issuer['state_code'] ?? '')) ?? '';
+        if (strlen($explicit) === 2) return $explicit;
+        $uf = strtoupper(trim((string)($issuer['state'] ?? $issuer['uf'] ?? '')));
+        $codes = ['RO'=>'11','AC'=>'12','AM'=>'13','RR'=>'14','PA'=>'15','AP'=>'16','TO'=>'17','MA'=>'21','PI'=>'22','CE'=>'23','RN'=>'24','PB'=>'25','PE'=>'26','AL'=>'27','SE'=>'28','BA'=>'29','MG'=>'31','ES'=>'32','RJ'=>'33','SP'=>'35','PR'=>'41','SC'=>'42','RS'=>'43','MS'=>'50','MT'=>'51','GO'=>'52','DF'=>'53'];
+        if (!isset($codes[$uf])) throw new RuntimeException('ISSUER_STATE_CODE_INVALID');
+        return $codes[$uf];
     }
 
     private function acquireLock(string $lockName, int $timeoutSeconds): bool
