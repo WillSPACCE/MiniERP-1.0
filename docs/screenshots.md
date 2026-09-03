@@ -9,21 +9,20 @@ Esta página reúne as capturas de tela do projeto com anotações e descriçõe
 
 ---
 
-## Dashboard (Desktop)
+## Painel da Plataforma (Desktop)
 
-![Dashboard Desktop](../mini-erp-web/prints/notebook.jpg)
+![Painel da Plataforma Desktop](../mini-erp-web/prints/notebook.jpg)
 
 Pontos principais:
 
-- Filtro por período e cliente no topo: usado para refinar os KPIs e os gráficos.
-- Cartões KPI (clientes, pedidos, notas, pendências, saldo em estoque): atalhos rápidos para as áreas relacionadas.
-- Gráficos (faturamento, mais vendidos): carregados assincronamente; configurar cache para performance.
-- Ações: exportar, filtrar e abrir prévias de DANFE.
+- Listagem de empresas com pesquisa e filtros (status, ambiente, tenant ID): usado por administradores para gerenciar tenants.
+- Cartões/resumos de métricas administrativas (empresas ativas, pendentes, provisões).
+- Ações por empresa: editar, provisionar, acessar ERP do tenant e visualizar status do ambiente.
 
 Testes recomendados:
 
-- Alterar período e verificar atualização de KPIs.
-- Abrir prévia DANFE e validar geração do PDF em nova guia.
+- Buscar por empresa e verificar paginação/contadores.
+- Testar ações administrativas (provisionar, acessar ERP) em um tenant de teste.
 
 ---
 

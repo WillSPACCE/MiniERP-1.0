@@ -50,9 +50,9 @@ imagens locais se estiverem disponíveis no ambiente de trabalho.
 
 A seguir estão as capturas reais (desktop, tablet e mobile) organizadas por área. Cada legenda explica brevemente o que a tela mostra.
 
-- **Dashboard (desktop)** — visão analítica com KPIs, filtros por período, cartões de resumo (clientes, pedidos, notas, pendências) e gráficos de faturamento e produtos mais vendidos.
+- **Painel da Plataforma (desktop)** — administração da plataforma: listagem de empresas, busca, status e ações administrativas (provisionar, acessar ERP do tenant). Ideal para administradores de plataforma e ops.
 
-  ![Dashboard Desktop](mini-erp-web/prints/notebook.jpg)
+  ![Painel da Plataforma Desktop](mini-erp-web/prints/notebook.jpg)
 
 - **Dashboard (desktop - alternativa)** — variação do dashboard em tela maior com gráficos e alertas de estoque.
 
